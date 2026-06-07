@@ -1,0 +1,1180 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  CONSULTANT
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  PENDING
+}
+
+enum OnlineStatus {
+  ONLINE
+  OFFLINE
+  BUSY
+}
+
+enum CallType {
+  PHONE
+  VIDEO
+  CHAT
+}
+
+enum CallStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum TransactionType {
+  PURCHASE
+  CALL_DEDUCTION
+  REFUND
+  BONUS
+  ADJUSTMENT
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum TopicStatus {
+  OPEN
+  CLOSED
+  PINNED
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+enum NotificationType {
+  CALL_INCOMING
+  CALL_ENDED
+  CREDIT_LOW
+  CREDIT_PURCHASED
+  PAYOUT_PROCESSED
+  MESSAGE_RECEIVED
+  SYSTEM
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum AdStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  REJECTED
+  EXPIRED
+}
+
+enum DonorType {
+  INDIVIDUAL
+  BUSINESS
+}
+
+enum AdPlacement {
+  HOME
+  CONSULTATION
+  DONATION
+  WEBSHOP
+  GLOBAL
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentType {
+  PACKAGE
+  DONATION
+  WEBSHOP
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+}
+
+enum PostType {
+  THOUGHT
+  QUESTION
+  ANSWER
+}
+
+enum BlogStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ConversationType {
+  DIRECT
+  SUPPORT
+  CONSULT
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+enum SessionType {
+  AUDIO
+  VIDEO
+  CHAT
+}
+
+enum TicketStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+enum SupportMessageType {
+  QUESTION
+  ANSWER
+}
+
+enum DayOfWeek {
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+}
+
+// model User {
+//   id              String     @id @default(uuid())
+//   email           String     @unique
+//   password        String?
+//   confirmPassword String?
+//   username        String?    @unique
+//   role            Role       @default(USER)
+//   status          UserStatus @default(PENDING)
+//   isVerified      Boolean    @default(false)
+
+//   // Profile fields (merged from UserProfile)
+//   name     String
+//   avatar   String?
+//   bio      String?
+//   location String?
+//   language String? @default("nl")
+//   phone    String?
+
+//   resetPasswordToken   String?
+//   resetPasswordExpires DateTime?
+//   otpCode              String?
+//   otpExpires           DateTime?
+//   otpPurpose           String?
+//   // Relations
+//   wallet               Wallet?
+//   consultant           Consultant?
+//   creditTransactions   CreditTransaction[]
+//   callsAsUser          Call[]              @relation("UserCalls")
+//   callsAsConsultant    Call[]              @relation("ConsultantCalls")
+//   refreshTokens        String?
+
+//   notifications            Notification[]
+//   packagePurchases         PackagePurchase[]
+//   payments                 Payment[]
+//   bookings                 Schedule[]                @relation("UserSchedules")
+//   reviews                  Review[]
+//   donations                Donation[]
+//   orders                   Order[]
+//   conversationParticipants ConversationParticipant[]
+//   messages                 Message[]
+//   conversationAnalytics    ConversationAnalytics[]
+//   conversationSessions     ConversationSession[]
+//   blogs                    Blog[]
+//   posts                    Post[]
+//   comments                 Comment[]
+//   adCampaigns              AdCampaign[]
+//   consultantQueries        ConsultantQuery[]
+//   createdAt                DateTime                  @default(now())
+//   updatedAt                DateTime                  @updatedAt
+//   chatParticipants         ChatParticipant[]
+//   chatMessages             ChatMessage[]
+//   chatBillingAsPayingUser  ChatBilling[]             @relation("UserPaymentRecords")
+//   chatBillingAsConsultant  ChatBilling[]             @relation("ConsultantBilling")
+//   postLikes                PostLike[]
+//   communityQuestions       CommunityQuestion[]
+//   sessions                 Session[]                 @relation("UserSessions") // Sessions where user is the client
+//   consultantSessions       Session[]                 @relation("ConsultantSessions") // Sessions where user is the consult
+
+//   @@map("users")
+// }
+
+// In your schema.prisma - fix the User model
+model User {
+  id              String     @id @default(uuid())
+  email           String     @unique
+  password        String?
+  confirmPassword String?
+  username        String?    @unique
+  role            Role       @default(USER)
+  status          UserStatus @default(PENDING)
+  isVerified      Boolean    @default(false)
+
+  // Profile fields
+  name     String
+  avatar   String?
+  bio      String?
+  location String?
+  language String? @default("nl")
+  phone    String?
+
+  resetPasswordToken   String?
+  resetPasswordExpires DateTime?
+  otpCode              String?
+  otpExpires           DateTime?
+  otpPurpose           String?
+
+  // Relations
+  wallet             Wallet?
+  consultant         Consultant?
+  creditTransactions CreditTransaction[]
+  callsAsUser        Call[]              @relation("UserCalls")
+  callsAsConsultant  Call[]              @relation("ConsultantCalls")
+  refreshTokens      String?
+
+  notifications            Notification[]
+  packagePurchases         PackagePurchase[]
+  payments                 Payment[]
+  bookings                 Schedule[]                @relation("UserSchedules")
+  reviews                  Review[]
+  donations                Donation[]
+  orders                   Order[]
+  conversationParticipants ConversationParticipant[]
+  messages                 Message[]
+  conversationAnalytics    ConversationAnalytics[]
+  conversationSessions     ConversationSession[]
+  blogs                    Blog[]
+  posts                    Post[]
+  comments                 Comment[]
+  adCampaigns              AdCampaign[]
+  consultantQueries        ConsultantQuery[]
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  chatParticipants         ChatParticipant[]
+  chatMessages             ChatMessage[]
+  chatBillingAsPayingUser  ChatBilling[]             @relation("UserPaymentRecords")
+  chatBillingAsConsultant  ChatBilling[]             @relation("ConsultantBilling")
+  postLikes                PostLike[]
+  communityQuestions       CommunityQuestion[]
+
+  // Fixed: Two separate relations for sessions
+  userSessions       Session[] @relation("UserSessions") // Sessions where user is client
+  consultantSessions Session[] @relation("ConsultantSessions") // Sessions where user is consultant
+
+  @@map("users")
+}
+
+model Consultant {
+  id                String              @id @default(uuid())
+  userId            String              @unique
+  specialization    String[]
+  bio               String?
+  pricePerMinute    Decimal             @default(2.50) @db.Decimal(10, 2)
+  firstNMinutes     Int?
+  firstNPrice       Decimal?            @db.Decimal(10, 2)
+  rating            Decimal             @default(0) @db.Decimal(3, 2)
+  totalReviews      Int                 @default(0)
+  onlineStatus      OnlineStatus        @default(OFFLINE)
+  isApproved        Boolean             @default(false)
+  stripeAccountId   String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  earnings          ConsultantEarning[]
+  payouts           Payout[]
+  reviews           Review[]
+  schedules         Schedule[]
+  availabilitySlots AvailabilitySlot[]
+
+  @@map("consultants")
+}
+
+model Schedule {
+  id           String        @id @default(uuid())
+  userId       String
+  consultantId String
+  bookingDate  DateTime
+  startTime    DateTime
+  endTime      DateTime
+  status       BookingStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  user       User       @relation("UserSchedules", fields: [userId], references: [id], onDelete: Cascade)
+  consultant Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+
+  @@map("schedules")
+}
+
+model AvailabilitySlot {
+  id           String    @id @default(uuid())
+  consultantId String
+  dayOfWeek    DayOfWeek
+  startTime    String
+  endTime      String
+  isActive     Boolean   @default(true)
+
+  consultant Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+
+  @@map("availability_slots")
+}
+
+model Review {
+  id           String     @id @default(uuid())
+  consultantId String
+  userId       String
+  rating       Int
+  comment      String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  consultant   Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
+}
+
+model Wallet {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  creditBalance Decimal  @default(0) @db.Decimal(10, 2)
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+model CreditTransaction {
+  id              String          @id @default(uuid())
+  userId          String
+  transactionType TransactionType
+  amount          Decimal         @db.Decimal(10, 2)
+  callId          String?
+  description     String?
+  balanceBefore   Decimal         @db.Decimal(10, 2)
+  balanceAfter    Decimal         @db.Decimal(10, 2)
+  createdAt       DateTime        @default(now())
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  call Call? @relation(fields: [callId], references: [id])
+
+  @@map("credit_transactions")
+}
+
+model Package {
+  id    String  @id @default(uuid())
+  name  String
+  slug  String  @unique
+  price Decimal @db.Decimal(10, 2)
+
+  minutes Int
+  credits Decimal?
+
+  description String?
+  features    String[] @default([])
+  isActive    Boolean  @default(true)
+
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchases PackagePurchase[]
+  payments  Payment[]
+
+  @@map("packages")
+}
+
+model PackagePurchase {
+  id String @id @default(uuid())
+
+  userId    String
+  packageId String
+
+  pricePaid Decimal @db.Decimal(10, 2)
+  minutes   Int
+  credits   Decimal @db.Decimal(10, 2)
+
+  status PaymentStatus @default(SUCCESS)
+
+  stripeSessionId String?
+  createdAt       DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package Package @relation(fields: [packageId], references: [id])
+
+  @@index([userId])
+  @@map("package_purchases")
+}
+
+enum BusinessType {
+  LOCAL_BUSINESS
+  ONLINE_BUSINESS
+}
+
+model Donation {
+  id String @id @default(uuid())
+
+  donorId   String
+  donorType DonorType
+
+  name         String
+  phone        String
+  email        String
+  businessName String?
+  websiteUrl   String?
+  amount       Int
+  businessType BusinessType @default(LOCAL_BUSINESS)
+
+  description String?
+  location    String?
+  image       String?
+  benefit     String
+  createdAt   DateTime @default(now())
+
+  donor User @relation(fields: [donorId], references: [id], onDelete: Cascade)
+
+  ads      AdCampaign[]
+  payments Payment[]
+
+  @@map("donations")
+}
+
+model AdCampaign {
+  id String @id @default(uuid())
+
+  donorId String
+  donor   User   @relation(fields: [donorId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  image       String?
+  linkUrl     String?
+
+  budget      Decimal @db.Decimal(10, 2)
+  spentAmount Decimal @default(0) @db.Decimal(10, 2)
+
+  status AdStatus @default(PENDING)
+
+  placements AdPlacement[] @default([HOME])
+
+  startDate DateTime?
+  endDate   DateTime?
+
+  isActive Boolean @default(true)
+
+  impressions Int @default(0)
+  clicks      Int @default(0)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  donation   Donation? @relation(fields: [donationId], references: [id])
+  donationId String?
+  isEnabled  Boolean   @default(true)
+
+  @@map("ad_campaigns")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String
+  subTitle    String?
+  price       Decimal  @db.Decimal(10, 2)
+  features    String[] @default([])
+  whatsInside String[] @default([])
+  benefits    String[] @default([])
+  gallery     String[] @default([])
+  stock       Int      @default(0)
+  isActive    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orderItems        OrderItem[]
+  productCategory   ProductCategory? @relation(fields: [productCategoryId], references: [id])
+  productCategoryId String?
+
+  @@map("products")
+}
+
+model ProductCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Order {
+  id     String @id @default(uuid())
+  userId String
+
+  totalAmount Decimal @db.Decimal(10, 2)
+
+  status OrderStatus @default(PENDING)
+
+  shippingAddress Json?
+  phone           String?
+
+  paymentStatus PaymentStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User        @relation(fields: [userId], references: [id])
+  items   OrderItem[]
+  payment Payment?
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String @id @default(uuid())
+  orderId   String
+  productId String
+
+  quantity Int
+  price    Decimal @db.Decimal(10, 2)
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+model Payment {
+  id String @id @default(uuid())
+
+  userId    String
+  packageId String?
+  orderId   String? @unique
+
+  amount       Decimal  @db.Decimal(10, 2)
+  creditsAdded Decimal?
+
+  type   PaymentType
+  status PaymentStatus
+
+  stripeSessionId       String
+  stripePaymentIntentId String
+  stripeCustomerId      String?
+
+  donationId String?
+
+  createdAt DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  package  Package?  @relation(fields: [packageId], references: [id])
+  donation Donation? @relation(fields: [donationId], references: [id])
+  order    Order?    @relation(fields: [orderId], references: [id])
+
+  @@index([userId])
+  @@map("payments")
+}
+
+model Call {
+  id                  String                @id @default(uuid())
+  userId              String
+  consultantId        String
+  callType            CallType
+  status              CallStatus            @default(PENDING)
+  startTime           DateTime?
+  endTime             DateTime?
+  durationSeconds     Int?
+  totalCost           Decimal?              @db.Decimal(10, 2)
+  telecomCallId       String?
+  roomUrl             String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  user                User                  @relation("UserCalls", fields: [userId], references: [id])
+  consultant          User                  @relation("ConsultantCalls", fields: [consultantId], references: [id])
+  billing             CallBilling[]
+  earnings            ConsultantEarning?    @relation(fields: [consultantEarningId], references: [id])
+  creditTxns          CreditTransaction[]
+  conversationId      String?
+  conversation        Conversation?
+  sessions            ConversationSession[]
+  uploadedFiles       CallFile[]
+  consultantEarningId String?
+
+  @@map("calls")
+}
+
+model CallBilling {
+  id              String   @id @default(uuid())
+  callId          String
+  minuteNumber    Int
+  creditsDeducted Decimal  @db.Decimal(10, 2)
+  timestamp       DateTime @default(now())
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@map("call_billing")
+}
+
+model ConsultantEarning {
+  id           String @id @default(uuid())
+  consultantId String
+  callId       String @unique
+
+  minutes     Int
+  grossAmount Decimal @db.Decimal(10, 2)
+
+  consultantShare Decimal @db.Decimal(10, 2)
+  platformShare   Decimal @db.Decimal(10, 2)
+
+  isPaidOut Boolean @default(false)
+  payoutId  String?
+
+  createdAt DateTime @default(now())
+
+  consultant Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+  payout     Payout?    @relation(fields: [payoutId], references: [id])
+  calls      Call[]
+
+  @@map("consultant_earnings")
+}
+
+model Payout {
+  id             String       @id @default(uuid())
+  consultantId   String
+  amount         Decimal      @db.Decimal(10, 2)
+  status         PayoutStatus @default(PENDING)
+  stripePayoutId String?
+  payoutDate     DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  consultant Consultant          @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+  earnings   ConsultantEarning[]
+
+  @@map("payouts")
+}
+
+model CallFile {
+  id         String   @id @default(uuid())
+  callId     String
+  uploadedBy String
+  fileUrl    String
+  fileName   String
+  fileType   String
+  fileSize   Int
+  createdAt  DateTime @default(now())
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@map("call_files")
+}
+
+model Post {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title   String?
+  content String
+
+  category    String?
+  subCategory String?
+
+  postType PostType @default(THOUGHT)
+
+  likesCount Int @default(0)
+  views      Int @default(0)
+
+  isPinned  Boolean @default(false)
+  isDeleted Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments Comment[]
+  likes    PostLike[]
+
+  @@index([userId])
+}
+
+model PostLike {
+  id String @id @default(uuid())
+
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+}
+
+model Comment {
+  id String @id @default(uuid())
+
+  postId String
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  content String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+  @@index([userId])
+}
+
+model Blog {
+  id              String        @id @default(uuid())
+  slug            String        @unique
+  title           String?
+  content         String?
+  excerpt         String?
+  tags            String[]      @default([])
+  metaTitle       String?
+  metaDescription String?
+  isFeatured      Boolean       @default(false)
+  status          BlogStatus    @default(DRAFT)
+  image           String[]      @default([])
+  readTime        Int?
+  categoryId      String?
+  category        BlogCategory? @relation(fields: [categoryId], references: [id])
+  publishedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  user            User?         @relation(fields: [userId], references: [id])
+  userId          String?
+
+  @@index([categoryId])
+  @@map("blogs")
+}
+
+model BlogCategory {
+  id        String   @id @default(uuid())
+  name      String
+  blogs     Blog[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("blog_categories")
+}
+
+model Notification {
+  id         String           @id @default(uuid())
+  userId     String
+  type       NotificationType
+  title      String
+  message    String
+  data       Json?
+  readStatus Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model Faq {
+  id        String   @id @default(uuid())
+  question  String
+  answer    String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("faqs")
+}
+
+enum QuestionStatus {
+  PENDING
+  ANSWERED
+  CLOSED
+}
+
+enum QuestionType {
+  USER
+  CONSULTANT
+}
+
+model CommunityQuestion {
+  id           String         @id @default(uuid())
+  userId       String
+  questionType QuestionType   @default(USER)
+  subject      String
+  question     String?
+  answer       String?
+  status       QuestionStatus @default(PENDING)
+  answeredBy   String?
+  answeredAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  topic        String?
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([questionType])
+  @@index([topic])
+  @@map("community_questions")
+}
+
+model Conversation {
+  id String @id @default(uuid())
+
+  type ConversationType
+
+  callId String? @unique
+  call   Call?   @relation(fields: [callId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  participants          ConversationParticipant[]
+  messages              Message[]
+  conversationAnalytics ConversationAnalytics[]
+  conversationSessions  ConversationSession[]
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String @id @default(uuid())
+  conversationId String
+  userId         String
+  role           Role
+
+  joinedAt DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id String @id @default(uuid())
+
+  conversationId String
+  senderId       String
+
+  message     String?
+  messageType MessageType
+
+  twilioSid String?
+
+  metadata Json?
+
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([senderId])
+}
+
+model ConversationSession {
+  id String @id @default(uuid())
+
+  conversationId String
+  userId         String
+  callId         String?
+
+  type SessionType
+
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  durationSeconds Int @default(0)
+
+  messageCount Int @default(0)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  call         Call?        @relation(fields: [callId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([callId])
+}
+
+model ConversationAnalytics {
+  id String @id @default(uuid())
+
+  conversationId String
+  userId         String
+
+  totalMessages Int @default(0)
+  totalSeconds  Int @default(0)
+
+  firstMessageAt DateTime?
+  lastMessageAt  DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+}
+
+model ConsultantQuery {
+  id String @id @default(uuid())
+
+  consultantId String
+  consultant   User   @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+
+  subject  String
+  question String
+
+  answer     String?
+  answerHtml String?
+
+  status TicketStatus @default(OPEN)
+
+  answeredBy String?
+
+  answeredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([consultantId])
+  @@index([status])
+  @@map("consultant_queries")
+}
+
+enum ChatSessionType {
+  CHAT
+  AUDIO
+  VIDEO
+}
+
+enum ChatSessionStatus {
+  IDLE
+  ACTIVE
+  ENDED
+}
+
+model ChatBilling {
+  id             String          @id @default(uuid())
+  conversationId String
+  userId         String
+  consultantId   String
+  sessionType    ChatSessionType
+  minuteNumber   Int
+  amountCharged  Decimal         @db.Decimal(10, 2)
+  balanceBefore  Decimal         @db.Decimal(10, 2)
+  balanceAfter   Decimal         @db.Decimal(10, 2)
+  createdAt      DateTime        @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User             @relation("UserPaymentRecords", fields: [userId], references: [id])
+  consultant   User             @relation("ConsultantBilling", fields: [consultantId], references: [id])
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([consultantId])
+  @@map("chat_billing")
+}
+
+model ChatConversation {
+  id            String            @id @default(uuid())
+  sessionType   ChatSessionType   @default(CHAT)
+  sessionStatus ChatSessionStatus @default(IDLE)
+  billingUserId String?
+  startedAt     DateTime?
+  endedAt       DateTime?
+  totalMinutes  Decimal?          @db.Decimal(10, 2)
+  totalCost     Decimal?          @db.Decimal(10, 2)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  participants ChatParticipant[]
+  messages     ChatMessage[]
+  billing      ChatBilling[]
+
+  @@index([updatedAt])
+  @@map("chat_conversations")
+}
+
+model ChatParticipant {
+  id             String   @id @default(uuid())
+  conversationId String
+  userId         String
+  joinedAt       DateTime @default(now())
+  lastReadAt     DateTime @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@map("chat_participants")
+}
+
+model ChatMessage {
+  id             String    @id @default(uuid())
+  conversationId String
+  senderId       String
+  message        String?
+  fileUrl        String?
+  fileName       String?
+  fileType       String?
+  fileSize       Int?
+  isRead         Boolean   @default(false)
+  isSystem       Boolean   @default(false)
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  conversation ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User             @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@map("chat_messages")
+}
+
+enum SessionSourceType {
+  PHONE
+  VIDEO
+  CHAT
+}
+
+enum SessionStatus {
+  COMPLETED
+  ACTIVE
+  CANCELLED
+}
+
+// model Session {
+//   id String @id @default(uuid())
+
+//   type SessionSourceType
+
+//   status SessionStatus @default(COMPLETED)
+
+//   userId           String
+//   consultantUserId String
+
+//   startTime       DateTime?
+//   endTime         DateTime?
+//   durationSeconds Int       @default(0)
+//   durationMinutes Decimal   @default(0) @db.Decimal(10, 2)
+
+//   totalCost         Decimal @default(0) @db.Decimal(10, 2)
+//   consultantEarning Decimal @default(0) @db.Decimal(10, 2)
+//   platformEarning   Decimal @default(0) @db.Decimal(10, 2)
+//   pricePerMinute    Decimal @default(2.50) @db.Decimal(10, 2)
+
+//   callId             String? @unique
+//   chatConversationId String? @unique
+
+//   rating     Int?
+//   review     String?
+//   reviewedAt DateTime?
+
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @updatedAt
+
+//   user       User @relation("UserSessions", fields: [userId], references: [id])
+//   consultant User @relation("ConsultantSessions", fields: [consultantUserId], references: [id])
+//   user       User @relation(fields: [userId], references: [id])
+
+//   @@index([userId])
+//   @@index([consultantUserId])
+//   @@index([type])
+//   @@index([status])
+//   @@index([createdAt])
+//   @@map("sessions")
+// }
+
+model Session {
+  id String @id @default(uuid())
+
+  type   SessionSourceType
+  status SessionStatus     @default(COMPLETED)
+
+  userId           String
+  consultantUserId String
+
+  startTime       DateTime?
+  endTime         DateTime?
+  durationSeconds Int       @default(0)
+  durationMinutes Decimal   @default(0) @db.Decimal(10, 2)
+
+  totalCost         Decimal @default(0) @db.Decimal(10, 2)
+  consultantEarning Decimal @default(0) @db.Decimal(10, 2)
+  platformEarning   Decimal @default(0) @db.Decimal(10, 2)
+  pricePerMinute    Decimal @default(2.50) @db.Decimal(10, 2)
+
+  callId             String? @unique
+  chatConversationId String? @unique
+
+  rating     Int?
+  review     String?
+  reviewedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Keep only these two - one for user, one for consultant
+  user       User @relation("UserSessions", fields: [userId], references: [id])
+  consultant User @relation("ConsultantSessions", fields: [consultantUserId], references: [id])
+
+  @@index([userId])
+  @@index([consultantUserId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@map("sessions")
+}
