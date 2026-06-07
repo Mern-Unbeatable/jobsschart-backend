@@ -1,4 +1,4 @@
-// src/features/chat/chat.service.js
+
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ForbiddenError, BadRequestError } from '../../shared/globals/helpers/error-handler.js';
@@ -8,8 +8,8 @@ import { sessionService } from '../session/session.service.js';
 const log = new Logger('ChatService');
 
 const PRICE_PER_MINUTE = 2.50;
-const CONSULTANT_SHARE_RATE = 0.5;  // 50%
-const PLATFORM_SHARE_RATE   = 0.5;  // 50%
+const CONSULTANT_SHARE_RATE = 0.5; 
+const PLATFORM_SHARE_RATE   = 0.5; 
 
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -19,8 +19,6 @@ const transporter = nodemailer.createTransport({
 });
 
 class ChatService {
-
-    // ── Conversation ──────────────────────────────────────────────
 
     async getOrCreateConversation(userId, otherUserId) {
         const otherUser = await prisma.user.findUnique({
