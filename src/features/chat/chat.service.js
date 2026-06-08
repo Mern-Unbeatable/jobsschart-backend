@@ -8,7 +8,7 @@ import { sessionService } from '../session/session.service.js';
 const log = new Logger('ChatService');
 
 const PRICE_PER_MINUTE = 2.50;
-const CONSULTANT_SHARE_RATE = 0.5; 
+const CONSULTANT_SHARE_RATE = 0.5;
 const PLATFORM_SHARE_RATE   = 0.5; 
 
 const transporter = nodemailer.createTransport({

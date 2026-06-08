@@ -62,7 +62,7 @@ export class Server {
 
     const allowedOrigins = [
       'http://localhost:5173',
-      'https://jbosschart.maktechgroup.tech'
+      'https://jobsschart.maktechgroup.tech'
     ];
 
     app.use(
