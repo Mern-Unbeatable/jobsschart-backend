@@ -41,8 +41,10 @@ class CallService {
         return { wallet, consultant: consultantUser.consultant, consultantUser };
     }
 
-   async initiateCall(userId, consultantUserId, callType) {
-        // Check balance first
+
+
+async initiateCall(userId, consultantUserId, callType) {
+    // ... existing balance/availability checks stay the same ...
         await this.checkUserBalance(userId, consultantUserId);
 
         // Check consultant availability
@@ -78,82 +80,80 @@ class CallService {
         if (activeCall) {
             throw new ConflictError('You already have an active call. Please end it first.');
         }
+    // Generate unique room name
+    const roomName = `call_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
 
-        // Generate unique room name
-        const roomName = `call_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+    // Get user info
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true, avatar: true }
+    });
 
-        // Get user info
-        const user = await prisma.user.findUnique({
-            where: { id: userId },
-            select: { id: true, name: true, email: true, avatar: true }
-        });
-
-        // Create call record
-        const call = await prisma.call.create({
-            data: {
-                userId,
-                consultantId: consultantUserId,  // This is the USER ID
-                callType,
-                status: 'PENDING',
-                startTime: new Date(),
-                roomUrl: roomName,
-            },
-            include: {
-                user: { select: { id: true, name: true, email: true, avatar: true } },
-            },
-        });
-
-        // Create Twilio room for VIDEO calls
-        if (callType === 'VIDEO') {
-            await twilioService.createRoom(roomName, call.id);
-        }
-
-        // Generate tokens for both participants
-        const userToken = twilioService.generateAccessToken(
+    // Create call record
+    const call = await prisma.call.create({
+        data: {
             userId,
-            user.name || user.email,
+            consultantId: consultantUserId,
+            callType,
+            status: 'PENDING',
+            startTime: new Date(),
+            roomUrl: roomName,
+        },
+        include: {
+            user: { select: { id: true, name: true, email: true, avatar: true } },
+        },
+    });
+
+    // ✅ FIX: Create Twilio room for ALL call types (not just VIDEO)
+    await twilioService.createRoom(roomName, call.id);
+
+    // Generate tokens for both participants
+    const userToken = twilioService.generateAccessToken(
+        userId,
+        user.name || user.email,
+        roomName,
+        callType
+    );
+
+    const consultantToken = twilioService.generateAccessToken(
+        consultantUserId,
+        consultantUser.name || consultantUser.email,
+        roomName,
+        callType
+    );
+
+    // Emit real-time notification to consultant via Socket.io
+    emitIncomingCall(consultantUserId, {
+        callId: call.id,
+        callerId: userId,
+        callerName: user.name,
+        callerEmail: user.email,
+        callerAvatar: user.avatar,
+        callType: callType,
+        roomName: roomName,
+        token: consultantToken,
+        timestamp: new Date().toISOString()
+    });
+
+    log.info(`Call initiated: ${call.id} - ${callType} call between ${userId} and ${consultantUserId}`);
+
+    return {
+        call: {
+            id: call.id,
             roomName,
-            callType
-        );
+            status: call.status,
+            callType: call.callType,
+            startTime: call.startTime,
+        },
+        tokens: {
+            user: { token: userToken, identity: user.name || user.email },
+            consultant: { token: consultantToken, identity: consultantUser.name || consultantUser.email },
+        },
+    };
+}
 
-        const consultantToken = twilioService.generateAccessToken(
-            consultantUserId,
-            consultantUser.name || consultantUser.email,
-            roomName,
-            callType
-        );
 
-        // Emit real-time notification to consultant via Socket.io
-        emitIncomingCall(consultantUserId, {
-            callId: call.id,
-            callerId: userId,
-            callerName: user.name,
-            callerEmail: user.email,
-            callerAvatar: user.avatar,
-            callType: callType,
-            roomName: roomName,
-            token: consultantToken,
-            timestamp: new Date().toISOString()
-        });
-
-        log.info(`Call initiated: ${call.id} - ${callType} call between ${userId} and ${consultantUserId}`);
-
-        return {
-            call: {
-                id: call.id,
-                roomName,
-                status: call.status,
-                callType: call.callType,
-                startTime: call.startTime,
-            },
-            tokens: {
-                user: { token: userToken, identity: user.name || user.email },
-                consultant: { token: consultantToken, identity: consultantUser.name || consultantUser.email },
-            },
-        };
-    }
-
-    async acceptCall(callId, consultantUserId) {
+async acceptCall(callId, consultantUserId) {
     const call = await prisma.call.findUnique({
         where: { id: callId },
         include: {
@@ -180,15 +180,16 @@ class CallService {
         where: { id: callId },
         data: { 
             status: 'ACTIVE',
-            startTime: actualStartTime  // Reset startTime to when call was answered
+            startTime: actualStartTime
         }
     });
 
     const consultantUser = await prisma.user.findUnique({
         where: { id: consultantUserId },
-        select: { id: true, name: true, avatar: true }
+        select: { id: true, name: true, avatar: true, email: true }
     });
 
+    // ✅ Generate tokens for BOTH participants
     const userToken = twilioService.generateAccessToken(
         call.userId,
         call.user.name || call.user.email,
@@ -196,7 +197,15 @@ class CallService {
         call.callType
     );
 
-    // Send the actual start time to the caller
+    // ✅ FIX: Also generate consultant's token
+    const consultantToken = twilioService.generateAccessToken(
+        consultantUserId,
+        consultantUser?.name || consultantUser?.email || 'Consultant',
+        call.roomUrl,
+        call.callType
+    );
+
+    // Send to user (caller)
     emitCallAccepted(call.userId, {
         callId: call.id,
         consultantId: consultantUserId,
@@ -204,7 +213,7 @@ class CallService {
         consultantAvatar: consultantUser?.avatar,
         roomName: call.roomUrl,
         token: userToken,
-        actualStartTime: actualStartTime.toISOString()  // Send this
+        actualStartTime: actualStartTime.toISOString()
     });
 
     log.info(`Call ${callId} accepted by consultant ${consultantUserId}`);
@@ -217,7 +226,8 @@ class CallService {
             callType: call.callType,
             startTime: actualStartTime
         },
-        token: userToken
+        token: userToken,
+        consultantToken: consultantToken  // ✅ FIX: Return consultant token too
     };
 }
 

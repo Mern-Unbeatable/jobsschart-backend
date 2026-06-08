@@ -37,9 +37,6 @@ class TwilioService {
             });
 
             log.info(`Room created: ${room.sid} for call ${callId}`);
-
-            // ✅ Only save telecomCallId — do NOT set status to ACTIVE here
-            // Status stays PENDING until consultant accepts
             await prisma.call.update({
                 where: { id: callId },
                 data: {
@@ -65,7 +62,6 @@ class TwilioService {
         }
     }
 
-    // Calculate call cost
     calculateCallCost(pricePerMinute, durationSeconds) {
         const durationMinutes = Math.ceil(durationSeconds / 60);
         const totalCost = pricePerMinute * durationMinutes;
