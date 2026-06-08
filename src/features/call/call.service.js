@@ -31,6 +31,8 @@ class CallService {
             throw new NotFoundError('Consultant not found');
         }
 
+
+        console.log('wallet balance check this ', wallet.creditBalance)
         if (wallet.creditBalance < consultantUser.consultant.pricePerMinute) {
             throw new BadRequestError(
                 `Insufficient balance. Minimum ${consultantUser.consultant.pricePerMinute} credits required. ` +

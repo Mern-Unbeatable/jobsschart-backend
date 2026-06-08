@@ -11,7 +11,6 @@ class AuthService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-
   async saveOtp(userId, otp, purpose) {
     const hashedOtp = await bcrypt.hash(otp, 10);
     return prisma.user.update({
@@ -43,8 +42,6 @@ class AuthService {
 
     return { valid: true, purpose: user.otpPurpose };
   }
-
-
 
   async clearOtp(userId) {
     return prisma.user.update({

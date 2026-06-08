@@ -1,4 +1,3 @@
-// src/seeders/admin.seeder.js
 import bcrypt from 'bcrypt';
 import { prisma } from '../config/db.js';
 import { config } from '../config/config.js';
@@ -104,7 +103,7 @@ export async function seedUser() {
     await prisma.wallet.create({
       data: {
         userId: user.id,
-        creditBalance: 100.00, // Give some credits for testing calls
+        creditBalance: 100.00,
       },
     });
 
@@ -165,11 +164,11 @@ export async function seedConsultant() {
     await prisma.wallet.create({
       data: {
         userId: consultantUser.id,
-        creditBalance: 0, // Consultants don't need credits, they earn
+        creditBalance: 0,
       },
     });
 
-    // Create consultant profile
+
     const consultant = await prisma.consultant.create({
       data: {
         userId: consultantUser.id,
@@ -181,12 +180,12 @@ export async function seedConsultant() {
         rating: 4.8,
         totalReviews: 25,
         onlineStatus: 'ONLINE',
-        isApproved: true, // Auto-approve for testing
+        isApproved: true,
         stripeAccountId: 'test_account_id_' + Date.now(),
       },
     });
 
-    // Add some availability slots for the consultant
+
     const daysOfWeek = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
     
     for (const day of daysOfWeek) {
@@ -212,14 +211,12 @@ export async function seedConsultant() {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// MAIN SEED FUNCTION
-// ─────────────────────────────────────────────────────────────
+
 export async function runAllSeeds() {
   try {
     config.logger.info('Starting database seeding...');
     
-    // Run all seeders
+
     await seedAdmin();
     await seedUser();
     await seedConsultant();
