@@ -50,13 +50,6 @@ enum TransactionType {
   ADJUSTMENT
 }
 
-enum PayoutStatus {
-  PENDING
-  PROCESSING
-  COMPLETED
-  FAILED
-}
-
 enum TopicStatus {
   OPEN
   CLOSED
@@ -299,9 +292,8 @@ model User {
   postLikes                PostLike[]
   communityQuestions       CommunityQuestion[]
 
-  // Fixed: Two separate relations for sessions
-  userSessions       Session[] @relation("UserSessions") // Sessions where user is client
-  consultantSessions Session[] @relation("ConsultantSessions") // Sessions where user is consultant
+  userSessions       Session[] @relation("UserSessions")
+  consultantSessions Session[] @relation("ConsultantSessions")
 
   @@map("users")
 }
@@ -677,22 +669,6 @@ model ConsultantEarning {
   calls      Call[]
 
   @@map("consultant_earnings")
-}
-
-model Payout {
-  id             String       @id @default(uuid())
-  consultantId   String
-  amount         Decimal      @db.Decimal(10, 2)
-  status         PayoutStatus @default(PENDING)
-  stripePayoutId String?
-  payoutDate     DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  consultant Consultant          @relation(fields: [consultantId], references: [id], onDelete: Cascade)
-  earnings   ConsultantEarning[]
-
-  @@map("payouts")
 }
 
 model CallFile {
@@ -1096,48 +1072,6 @@ enum SessionStatus {
   CANCELLED
 }
 
-// model Session {
-//   id String @id @default(uuid())
-
-//   type SessionSourceType
-
-//   status SessionStatus @default(COMPLETED)
-
-//   userId           String
-//   consultantUserId String
-
-//   startTime       DateTime?
-//   endTime         DateTime?
-//   durationSeconds Int       @default(0)
-//   durationMinutes Decimal   @default(0) @db.Decimal(10, 2)
-
-//   totalCost         Decimal @default(0) @db.Decimal(10, 2)
-//   consultantEarning Decimal @default(0) @db.Decimal(10, 2)
-//   platformEarning   Decimal @default(0) @db.Decimal(10, 2)
-//   pricePerMinute    Decimal @default(2.50) @db.Decimal(10, 2)
-
-//   callId             String? @unique
-//   chatConversationId String? @unique
-
-//   rating     Int?
-//   review     String?
-//   reviewedAt DateTime?
-
-//   createdAt DateTime @default(now())
-//   updatedAt DateTime @updatedAt
-
-//   user       User @relation("UserSessions", fields: [userId], references: [id])
-//   consultant User @relation("ConsultantSessions", fields: [consultantUserId], references: [id])
-//   user       User @relation(fields: [userId], references: [id])
-
-//   @@index([userId])
-//   @@index([consultantUserId])
-//   @@index([type])
-//   @@index([status])
-//   @@index([createdAt])
-//   @@map("sessions")
-// }
-
 model Session {
   id String @id @default(uuid())
 
@@ -1177,4 +1111,54 @@ model Session {
   @@index([status])
   @@index([createdAt])
   @@map("sessions")
+}
+
+enum PayoutStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  COMPLETED
+  FAILED
+  REJECTED
+}
+
+enum PayoutMethod {
+  BANK
+}
+
+model Payout {
+  id           String   @id @default(uuid())
+  consultantId String
+  amount       Decimal  @db.Decimal(10, 2)
+  netAmount    Decimal? @db.Decimal(10, 2)
+  platformFee  Decimal? @db.Decimal(10, 2)
+
+  status PayoutStatus @default(PENDING)
+  method PayoutMethod @default(BANK)
+
+  //  Bank details 
+  organisationName String?
+  routingNumber    String?
+  accountNumber    String?
+
+  // Admin fields
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  rejectReason String?
+  adminNote    String?
+
+  // Timing
+  requestedAt DateTime  @default(now())
+  processedAt DateTime?
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consultant Consultant          @relation(fields: [consultantId], references: [id], onDelete: Cascade)
+  earnings   ConsultantEarning[]
+
+  @@index([consultantId])
+  @@index([status])
+  @@map("payouts")
 }

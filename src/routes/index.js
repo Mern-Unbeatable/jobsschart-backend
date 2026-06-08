@@ -12,6 +12,7 @@ import { faqRoutes } from '../features/faq/faq.route.js';
 import { orderRoutes } from '../features/order/order.route.js';
 import { packageRoutes } from '../features/package/package.routes.js';
 import { paymentRoutes } from '../features/payment/payment.routes.js';
+import { payoutRoutes } from '../features/payout/payout.route.js';
 import { postRoutes } from '../features/post/post.route.js';
 import { productRoutes } from '../features/product/product.route.js';
 import { productCategoryRoutes } from '../features/productCategory/productCategory.route.js';
@@ -47,4 +48,5 @@ export default (app) => {
   app.use(`${BASE_PATH}/community-questions`, communityQuestionRoutes);
   app.use(`${BASE_PATH}/availability`, availabilityRoutes);
   app.use(`${BASE_PATH}/sessions`, sessionRoutes);
+    app.use(`${BASE_PATH}/payouts`, payoutRoutes);
 };
