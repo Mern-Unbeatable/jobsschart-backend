@@ -29,17 +29,15 @@ class TwilioService {
 
     async createRoom(roomName, callId) {
         try {
-            // ─────────────────────────────────────────────────────────
-            // KEY FIX: Use 'go' (peer-to-peer) instead of 'group'.
-            // In a 'group' room, each participant must manually call
-            // publication.subscribe() for remote tracks — if that call
-            // is missed or times out, the other side hears nothing.
-            // 'go' rooms (peer-to-peer, max 2 participants) auto-subscribe
-            // all tracks on both sides, so audio/video just works.
-            // ─────────────────────────────────────────────────────────
+            // Use 'peer-to-peer' type (NOT 'go', NOT 'group').
+            // - 'go' does not support maxParticipants and has limited SDK support.
+            // - 'group' requires manual track subscription (publication.subscribe())
+            //    which is error-prone and causes one-sided audio/video.
+            // - 'peer-to-peer' supports exactly 2 participants, auto-subscribes
+            //    all tracks on both sides — audio and video just work.
             const room = await this.client.video.rooms.create({
                 uniqueName: roomName,
-                type: 'go',          // peer-to-peer, auto-subscribes all tracks
+                type: 'peer-to-peer',
                 maxParticipants: 2,
             });
 
