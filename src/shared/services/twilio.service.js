@@ -27,12 +27,19 @@ class TwilioService {
         return token.toJwt();
     }
 
-    // Create a Video Room
     async createRoom(roomName, callId) {
         try {
+            // ─────────────────────────────────────────────────────────
+            // KEY FIX: Use 'go' (peer-to-peer) instead of 'group'.
+            // In a 'group' room, each participant must manually call
+            // publication.subscribe() for remote tracks — if that call
+            // is missed or times out, the other side hears nothing.
+            // 'go' rooms (peer-to-peer, max 2 participants) auto-subscribe
+            // all tracks on both sides, so audio/video just works.
+            // ─────────────────────────────────────────────────────────
             const room = await this.client.video.rooms.create({
                 uniqueName: roomName,
-                type: 'group',
+                type: 'go',          // peer-to-peer, auto-subscribes all tracks
                 maxParticipants: 2,
             });
 
@@ -52,7 +59,6 @@ class TwilioService {
         }
     }
 
-    // End room
     async endRoom(roomSid) {
         try {
             await this.client.video.rooms(roomSid).update({ status: 'completed' });

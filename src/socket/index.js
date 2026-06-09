@@ -196,7 +196,7 @@ export const initSocket = (httpServer) => {
     io.on('connection', (socket) => {
         log.info(`Client connected: ${socket.id}`);
 
-        // ── PRESENCE: Register ──────────────────────────────────────
+        // ── PRESENCE: Register
         socket.on('register', async (userId) => {
             if (!userId) {
                 socket.emit('registered', { error: 'No userId provided' });
@@ -220,19 +220,19 @@ export const initSocket = (httpServer) => {
                 room: `user_${userId}`,
             });
 
-            // ✅ Mark consultant ONLINE when they connect
+    
             await setConsultantStatus(userId, 'ONLINE');
         });
 
-        // ── PRESENCE: Heartbeat (keeps alive during inactivity) ─────
+        // ── PRESENCE: Heartbeat 
         socket.on('heartbeat', () => {
             socket.lastHeartbeat = Date.now();
             // Optionally ack back so client can detect stale connections
             socket.emit('heartbeat_ack');
         });
 
-        // ── PRESENCE: Manual status change ──────────────────────────
-        // e.g. consultant sets themselves as BUSY during a call
+        // ── PRESENCE: Manual status change
+ 
         socket.on('set_status', async ({ status }) => {
             if (!socket.userId) return;
             const allowed = ['ONLINE', 'OFFLINE', 'BUSY'];
@@ -244,21 +244,19 @@ export const initSocket = (httpServer) => {
         socket.on('disconnect', async () => {
             log.info(`Client disconnected: ${socket.id}`);
             if (socket.userId) {
-                // Small delay: handles page reload (disconnect + immediate reconnect)
-                // Without this, a refresh causes a brief OFFLINE flash
+              
                 setTimeout(async () => {
-                    // Check if they reconnected in another socket
                     const sockets = await io.in(`user_${socket.userId}`).fetchSockets();
                     if (sockets.length === 0) {
                         await setConsultantStatus(socket.userId, 'OFFLINE');
                     } else {
                         log.info(`User ${socket.userId} reconnected quickly, keeping ONLINE`);
                     }
-                }, 3000); // 3 second grace period
+                }, 3000); 
             }
         });
 
-        // ── CHAT: Get or create conversation ───────────────────────
+        // ── : Get or create conversation
         socket.on('get_conversation', async (data, callback) => {
             try {
                 const conversation = await chatService.getOrCreateConversation(data.userId, data.otherUserId);
@@ -273,7 +271,7 @@ export const initSocket = (httpServer) => {
             socket.join(`conv_${data.conversationId}`);
         });
 
-        // ── CHAT: Send message ──────────────────────────────────────
+        //: Send message 
         socket.on('send_message', async (data, callback) => {
             try {
                 const { conversationId, message } = data;
