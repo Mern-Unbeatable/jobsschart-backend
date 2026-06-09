@@ -29,15 +29,12 @@ class TwilioService {
 
     async createRoom(roomName, callId) {
         try {
-            // Use 'peer-to-peer' type (NOT 'go', NOT 'group').
-            // - 'go' does not support maxParticipants and has limited SDK support.
-            // - 'group' requires manual track subscription (publication.subscribe())
-            //    which is error-prone and causes one-sided audio/video.
-            // - 'peer-to-peer' supports exactly 2 participants, auto-subscribes
-            //    all tracks on both sides — audio and video just work.
-            const room = await this.client.video.rooms.create({
+            // Twilio SDK v6 only supports 'group' and 'group-small'.
+            // 'group-small' = max 4 participants, lower cost, auto-subscribes
+            // all tracks — so no manual publication.subscribe() needed on client.
+            const room = await this.client.video.v1.rooms.create({
                 uniqueName: roomName,
-                type: 'peer-to-peer',
+                type: 'group-small',
                 maxParticipants: 2,
             });
 
@@ -59,7 +56,7 @@ class TwilioService {
 
     async endRoom(roomSid) {
         try {
-            await this.client.video.rooms(roomSid).update({ status: 'completed' });
+            await this.client.video.v1.rooms(roomSid).update({ status: 'completed' });
             log.info(`Room ${roomSid} ended`);
         } catch (error) {
             log.error(`Error ending room: ${error.message}`);
