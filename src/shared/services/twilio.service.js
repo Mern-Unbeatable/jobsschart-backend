@@ -27,10 +27,10 @@ class TwilioService {
         return token.toJwt();
     }
 
+    // Create a Video Room
     async createRoom(roomName, callId) {
         try {
-
-            const room = await this.client.video.v1.rooms.create({
+            const room = await this.client.video.rooms.create({
                 uniqueName: roomName,
                 type: 'group',
                 maxParticipants: 2,
@@ -52,9 +52,10 @@ class TwilioService {
         }
     }
 
+    // End room
     async endRoom(roomSid) {
         try {
-            await this.client.video.v1.rooms(roomSid).update({ status: 'completed' });
+            await this.client.video.rooms(roomSid).update({ status: 'completed' });
             log.info(`Room ${roomSid} ended`);
         } catch (error) {
             log.error(`Error ending room: ${error.message}`);
