@@ -29,12 +29,10 @@ class TwilioService {
 
     async createRoom(roomName, callId) {
         try {
-            // Twilio SDK v6 only supports 'group' and 'group-small'.
-            // 'group-small' = max 4 participants, lower cost, auto-subscribes
-            // all tracks — so no manual publication.subscribe() needed on client.
+
             const room = await this.client.video.v1.rooms.create({
                 uniqueName: roomName,
-                type: 'group-small',
+                type: 'group',
                 maxParticipants: 2,
             });
 
