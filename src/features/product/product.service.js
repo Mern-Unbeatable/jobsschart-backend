@@ -14,13 +14,8 @@ class ProductService {
 
         const where = { isActive: true };
 
-        if (queryParams.categoryId) where.productCategoryId = queryParams.categoryId;
-
-        if (queryParams.categorySlug) {
-            const cat = await prisma.productCategory.findUnique({
-                where: { slug: queryParams.categorySlug }
-            });
-            if (cat) where.productCategoryId = cat.id;
+        if (queryParams.productCategory) {
+            where.productCategory = queryParams.productCategory;
         }
 
         if (queryParams.search) {
@@ -42,11 +37,6 @@ class ProductService {
         const [products, total] = await Promise.all([
             prisma.product.findMany({
                 where,
-                include: {
-                    productCategory: {
-                        select: { id: true, name: true }
-                    }
-                },
                 orderBy: { [sortField]: sortOrder },
                 skip,
                 take: limit,
@@ -60,11 +50,6 @@ class ProductService {
     async getProductById(id) {
         const product = await prisma.product.findUnique({
             where: { id },
-            include: {
-                productCategory: {
-                    select: { id: true, name: true }
-                }
-            },
         });
         if (!product) throw new NotFoundError('Product not found');
         return product;
@@ -73,11 +58,6 @@ class ProductService {
     async getProductBySlug(slug) {
         const product = await prisma.product.findUnique({
             where: { slug },
-            include: {
-                productCategory: {
-                    select: { id: true, name: true }
-                }
-            },
         });
         if (!product || !product.isActive) throw new NotFoundError('Product not found');
         return product;
@@ -92,13 +72,6 @@ class ProductService {
             excludeId: null
         });
 
-        if (data.productCategoryId) {
-            const cat = await prisma.productCategory.findUnique({
-                where: { id: data.productCategoryId }
-            });
-            if (!cat) throw new NotFoundError('Product category not found');
-        }
-
         const product = await prisma.product.create({
             data: {
                 name: data.name,
@@ -112,9 +85,8 @@ class ProductService {
                 gallery: data.gallery || [],
                 stock: data.stock ?? 0,
                 isActive: data.isActive ?? true,
-                productCategoryId: data.productCategoryId || null,
+                productCategory: data.productCategory,
             },
-            include: { productCategory: true },
         });
 
         log.info(`Product created: ${product.id} — "${product.name}"`);
@@ -155,21 +127,11 @@ class ProductService {
         if (data.gallery !== undefined) updateData.gallery = data.gallery;
         if (data.stock !== undefined) updateData.stock = data.stock;
         if (data.isActive !== undefined) updateData.isActive = data.isActive;
-
-        if (data.productCategoryId !== undefined) {
-            if (data.productCategoryId) {
-                const cat = await prisma.productCategory.findUnique({
-                    where: { id: data.productCategoryId }
-                });
-                if (!cat) throw new NotFoundError('Product category not found');
-            }
-            updateData.productCategoryId = data.productCategoryId;
-        }
+        if (data.productCategory !== undefined) updateData.productCategory = data.productCategory;
 
         const updated = await prisma.product.update({
             where: { id },
             data: updateData,
-            include: { productCategory: true },
         });
 
         log.info(`Product updated: ${id}`);
@@ -208,21 +170,16 @@ class ProductService {
     }
 
     async getCategories() {
-        const categories = await prisma.productCategory.findMany({
-            include: {
-                products: {
-                    where: { isActive: true },
-                    select: { id: true }
-                }
-            }
+        const categories = await prisma.product.groupBy({
+            by: ['productCategory'],
+            where: { isActive: true },
+            _count: { _all: true },
         });
 
-        const categoriesWithCount = categories.map(cat => ({
-            ...cat,
-            productCount: cat.products.length
+        return categories.map(cat => ({
+            name: cat.productCategory,
+            productCount: cat._count._all,
         }));
-
-        return categoriesWithCount;
     }
 }
 
