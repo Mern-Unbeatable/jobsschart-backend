@@ -34,7 +34,7 @@ export const createProductSchema = z.object({
     whatsInside: stringOrArray,
     benefits: stringOrArray,
     gallery: galleryField,
-    productCategoryId: z.string().optional().nullable(),
+    productCategory: z.string().optional().nullable(),
 });
 
 export const updateProductSchema = z.object({
@@ -51,7 +51,7 @@ export const updateProductSchema = z.object({
     whatsInside: stringOrArray,
     benefits: stringOrArray,
     gallery: galleryField,
-    productCategoryId: z.string().uuid('Invalid category ID').optional().nullable(),
+    productCategory: z.string().uuid('Invalid category ID').optional().nullable(),
 });
 
 export const updateStockSchema = z.object({
