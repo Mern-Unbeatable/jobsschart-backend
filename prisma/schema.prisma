@@ -173,68 +173,6 @@ enum DayOfWeek {
   SATURDAY
 }
 
-// model User {
-//   id              String     @id @default(uuid())
-//   email           String     @unique
-//   password        String?
-//   confirmPassword String?
-//   username        String?    @unique
-//   role            Role       @default(USER)
-//   status          UserStatus @default(PENDING)
-//   isVerified      Boolean    @default(false)
-
-//   // Profile fields (merged from UserProfile)
-//   name     String
-//   avatar   String?
-//   bio      String?
-//   location String?
-//   language String? @default("nl")
-//   phone    String?
-
-//   resetPasswordToken   String?
-//   resetPasswordExpires DateTime?
-//   otpCode              String?
-//   otpExpires           DateTime?
-//   otpPurpose           String?
-//   // Relations
-//   wallet               Wallet?
-//   consultant           Consultant?
-//   creditTransactions   CreditTransaction[]
-//   callsAsUser          Call[]              @relation("UserCalls")
-//   callsAsConsultant    Call[]              @relation("ConsultantCalls")
-//   refreshTokens        String?
-
-//   notifications            Notification[]
-//   packagePurchases         PackagePurchase[]
-//   payments                 Payment[]
-//   bookings                 Schedule[]                @relation("UserSchedules")
-//   reviews                  Review[]
-//   donations                Donation[]
-//   orders                   Order[]
-//   conversationParticipants ConversationParticipant[]
-//   messages                 Message[]
-//   conversationAnalytics    ConversationAnalytics[]
-//   conversationSessions     ConversationSession[]
-//   blogs                    Blog[]
-//   posts                    Post[]
-//   comments                 Comment[]
-//   adCampaigns              AdCampaign[]
-//   consultantQueries        ConsultantQuery[]
-//   createdAt                DateTime                  @default(now())
-//   updatedAt                DateTime                  @updatedAt
-//   chatParticipants         ChatParticipant[]
-//   chatMessages             ChatMessage[]
-//   chatBillingAsPayingUser  ChatBilling[]             @relation("UserPaymentRecords")
-//   chatBillingAsConsultant  ChatBilling[]             @relation("ConsultantBilling")
-//   postLikes                PostLike[]
-//   communityQuestions       CommunityQuestion[]
-//   sessions                 Session[]                 @relation("UserSessions") // Sessions where user is the client
-//   consultantSessions       Session[]                 @relation("ConsultantSessions") // Sessions where user is the consult
-
-//   @@map("users")
-// }
-
-// In your schema.prisma - fix the User model
 model User {
   id              String     @id @default(uuid())
   email           String     @unique
@@ -291,9 +229,8 @@ model User {
   chatBillingAsConsultant  ChatBilling[]             @relation("ConsultantBilling")
   postLikes                PostLike[]
   communityQuestions       CommunityQuestion[]
-
-  userSessions       Session[] @relation("UserSessions")
-  consultantSessions Session[] @relation("ConsultantSessions")
+  userSessions             Session[]                 @relation("UserSessions")
+  consultantSessions       Session[]                 @relation("ConsultantSessions")
 
   @@map("users")
 }
@@ -319,6 +256,8 @@ model Consultant {
   reviews           Review[]
   schedules         Schedule[]
   availabilitySlots AvailabilitySlot[]
+  category          String?
+  topics            String?
 
   @@map("consultants")
 }
@@ -1160,4 +1099,22 @@ model Payout {
   @@index([consultantId])
   @@index([status])
   @@map("payouts")
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("categories")
+}
+
+model Topic {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("topics")
 }

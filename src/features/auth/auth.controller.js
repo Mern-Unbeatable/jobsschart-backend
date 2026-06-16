@@ -32,17 +32,53 @@ class AuthController {
   }
 
   signUp = catchAsync(async (req, res) => {
+    console.log('body check', req.body)
     const validatedData = signupSchema.parse(req.body);
-    const { name, email, password, role, phone, bio, location, language, avatar } = validatedData;
+
+
+
+    const {
+      name,
+      email,
+      password,
+      role,
+      phone,
+      bio,
+      location,
+      language,
+      avatar,
+      category,
+      topics,
+      specialization,
+      pricePerMinute,
+      firstNMinutes,
+      firstNPrice
+    } = validatedData;
+
     this.log.info(`Signup attempt for email: ${email}`);
 
     const existingUser = await authService.getUserByEmail(email);
     if (existingUser) throw new Error('Email is already in use');
 
     const hashedPassword = await authService.hashPassword(password);
+
+    // Pass ALL fields to createUser
     const user = await authService.createUser({
-      name, email, password: hashedPassword,
-      role: role || 'USER', phone, bio, location, language, avatar,
+      name,
+      email,
+      password: hashedPassword,
+      role: role || 'USER',
+      phone,
+      bio,
+      location,
+      language,
+      avatar,
+      category,           // ← Add this
+      topics,             // ← Add this
+      specialization,     // ← Add this
+      pricePerMinute,     // ← Add this
+      firstNMinutes,      // ← Add this
+      firstNPrice         // ← Add this
     });
 
     const tokens = {
@@ -58,11 +94,20 @@ class AuthController {
       message: 'Registration successful',
       data: {
         user: {
-          id: user.id, email: user.email, username: user.username,
-          name: user.name, role: user.role, status: user.status,
-          isVerified: user.isVerified, phone: user.phone, bio: user.bio,
-          location: user.location, language: user.language,
-          avatar: user.avatar, wallet: user.wallet, consultant: user.consultant,
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          role: user.role,
+          status: user.status,
+          isVerified: user.isVerified,
+          phone: user.phone,
+          bio: user.bio,
+          location: user.location,
+          language: user.language,
+          avatar: user.avatar,
+          wallet: user.wallet,
+          consultant: user.consultant,
         },
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,

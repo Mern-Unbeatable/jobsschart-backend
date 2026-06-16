@@ -120,7 +120,6 @@ class AuthService {
 
     const userRole = data.role || 'USER';
 
-
     const userData = {
       email: data.email,
       password: data.password,
@@ -135,7 +134,6 @@ class AuthService {
       language: data.language || 'nl',
       avatar: data.avatar || null,
     };
-
 
     const user = await prisma.user.create({
       data: {
@@ -155,20 +153,41 @@ class AuthService {
               firstNPrice: data.firstNPrice || null,
               isApproved: false,
               onlineStatus: 'OFFLINE',
+              category: data.category || null,
+              topics: data.topics || null,
             }
           }
         })
       },
       include: {
         wallet: true,
-        consultant: true,
+        consultant: {
+          // Explicitly select all fields including category and topics
+          select: {
+            id: true,
+            userId: true,
+            specialization: true,
+            bio: true,
+            pricePerMinute: true,
+            firstNMinutes: true,
+            firstNPrice: true,
+            rating: true,
+            totalReviews: true,
+            onlineStatus: true,
+            isApproved: true,
+            stripeAccountId: true,
+            createdAt: true,
+            updatedAt: true,
+            category: true,     // ← Add this
+            topics: true,       // ← Add this
+          }
+        }
       },
     });
 
     this.log.info(`User created: ${user.email} with role: ${user.role}`);
 
     const { password, ...userWithoutPassword } = user;
-
     return userWithoutPassword;
   }
 

@@ -4,6 +4,7 @@ import { authRoutes } from '../features/auth/auth.routes.js';
 import { availabilityRoutes } from '../features/availability/availability.route.js';
 import { blogRoutes } from '../features/blog/blog.route.js';
 import { callRoutes } from '../features/call/call.route.js';
+import { categoryRoutes } from '../features/category/category.route.js';
 import { chatRoute } from '../features/chat/chat.route.js';
 import { communityQuestionRoutes } from '../features/communityQuestion/communityQuestion.route.js';
 import { consultantRoutes } from '../features/consultant/consultant.route.js';
@@ -19,6 +20,7 @@ import { productCategoryRoutes } from '../features/productCategory/productCatego
 import { reviewRoutes } from '../features/review/review.route.js';
 import { scheduleRoutes } from '../features/schedule/schedule.route.js';
 import { sessionRoutes } from '../features/session/session.route.js';
+import { topicRoutes } from '../features/topic/topic.route.js';
 import { userRoutes } from '../features/user/user.routes.js';
 import { healthRoutes } from './health.route.js';
 
@@ -48,5 +50,7 @@ export default (app) => {
   app.use(`${BASE_PATH}/community-questions`, communityQuestionRoutes);
   app.use(`${BASE_PATH}/availability`, availabilityRoutes);
   app.use(`${BASE_PATH}/sessions`, sessionRoutes);
-    app.use(`${BASE_PATH}/payouts`, payoutRoutes);
+  app.use(`${BASE_PATH}/payouts`, payoutRoutes);
+  app.use(`${BASE_PATH}/category`, categoryRoutes);
+  app.use(`${BASE_PATH}/topics`, topicRoutes);
 };
