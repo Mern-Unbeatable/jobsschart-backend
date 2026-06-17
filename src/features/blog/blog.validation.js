@@ -21,34 +21,34 @@ const galleryField = z
 
 // Blog Schemas
 export const createBlogSchema = z.object({
-    title: z.string().min(5, 'Title must be at least 5 characters').max(200),
-    slug: z.string().min(3).max(200).regex(/^[a-z0-9-]+$/).optional(),
+    title: z.string().min(5, 'Title must be at least 5 characters'),
+    slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
     content: z.string().optional().nullable(),
-    excerpt: z.string().max(500).optional().nullable(),
+    excerpt: z.string().optional().nullable(),
     tags: stringOrArray,
     image: stringOrArray,
     categoryId: z.string().uuid().optional().nullable(),
     status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).default('DRAFT'),
-    metaTitle: z.string().max(150).optional().nullable(),
-    metaDescription: z.string().max(300).optional().nullable(),
-    readTime: z.number().int().min(1).max(60).optional(),
+    metaTitle: z.string().optional().nullable(),
+    metaDescription: z.string().optional().nullable(),
+    readTime: z.number().int().min(1).optional(),
     isFeatured: z.union([z.boolean(), z.string()])
         .transform((v) => v === true || v === 'true')
         .default(false),
 });
 
 export const updateBlogSchema = z.object({
-    title: z.string().min(5).max(200).optional(),
-    slug: z.string().min(3).max(200).regex(/^[a-z0-9-]+$/).optional(),
-    content: z.string().min(50).optional(),
-    excerpt: z.string().max(500).optional().nullable(),
+    title: z.string().optional(),
+    slug: z.string().regex(/^[a-z0-9-]+$/).optional(),
+    content: z.string().optional().nullable(),
+    excerpt: z.string().optional().nullable(),
     tags: stringOrArray,
     image: stringOrArray,
     categoryId: z.string().uuid().optional().nullable(),
     status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).optional(),
-    metaTitle: z.string().max(150).optional().nullable(),
-    metaDescription: z.string().max(300).optional().nullable(),
-    readTime: z.number().int().min(1).max(60).optional(),
+    metaTitle: z.string().optional().nullable(),
+    metaDescription: z.string().optional().nullable(),
+    readTime: z.number().int().optional(),
     isFeatured: z.union([z.boolean(), z.string()])
         .transform((v) => v === true || v === 'true')
         .optional(),
