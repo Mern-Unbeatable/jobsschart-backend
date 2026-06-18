@@ -268,7 +268,6 @@ class PaymentService {
     const { userId, type } = session.metadata;
     log.info(`Processing: type=${type} user=${userId} session=${session.id}`);
 
-    // Log all metadata for debugging
     log.info(`📋 Session metadata: ${JSON.stringify(session.metadata)}`);
 
     const existingPayment = await prisma.payment.findFirst({
@@ -348,53 +347,6 @@ class PaymentService {
 
     log.info(`Package "${pkg.name}": +${credits} credits → user ${userId}`);
   }
-
-  // async _saveDonation(session) {
-  //   const m = session.metadata;
-
-  //   await prisma.$transaction(async (tx) => {
-  //     const donation = await tx.donation.create({
-  //       data: {
-  //         donorId: m.userId,
-  //         donorType: m.donorType,
-  //         name: m.donorName,
-  //         phone: m.donorPhone,
-  //         email: m.donorEmail,
-  //         businessName:m.businessName,
-  //         businessType:m.businessType,
-  //         websiteUrl:m.websiteUrl,
-  //         amount: parseInt(m.donationAmount),
-  //         description: m.donationDescription || null,
-  //         location: m.donationLocation || null,
-  //         image: m.donationImage || null,
-  //         benefit: m.benefit,
-  //       },
-  //     });
-
-  //     await tx.payment.updateMany({
-  //       where: { stripeSessionId: session.id },
-  //       data: { donationId: donation.id },
-  //     });
-
-  //     await tx.adCampaign.create({
-  //       data: {
-  //         donorId: m.userId,
-  //         title: `Donation Campaign - ${m.benefit}`,
-  //         description: m.donationDescription || null,
-  //         image: m.donationImage || null,
-  //         budget: parseInt(m.donationAmount),
-  //         spentAmount: 0,
-  //         status: 'PENDING',
-  //         linkUrl: m.websiteUrl,
-  //         donationId: donation.id,
-  //         isActive: true,
-  //         placements: ['HOME'],
-  //       },
-  //     });
-  //   });
-
-  //   log.info(`Donation saved + AdCampaign created for user ${m.userId}`);
-  // }
 
   async _saveDonation(session) {
     const m = session.metadata;
