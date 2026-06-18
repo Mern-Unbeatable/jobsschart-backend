@@ -489,8 +489,8 @@ model Order {
 
   shippingAddress Json?
   phone           String?
-
-  paymentStatus PaymentStatus @default(PENDING)
+  deliveryFee     Float
+  paymentStatus   PaymentStatus @default(PENDING)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

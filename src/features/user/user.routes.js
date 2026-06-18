@@ -23,6 +23,7 @@ router.get(
     userController.getAllUsers
 );
 
+
 router.get(
     '/admin/stats',
     authMiddleware.authorize('ADMIN'),

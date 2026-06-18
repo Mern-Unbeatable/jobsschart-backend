@@ -6,6 +6,10 @@ import { Logger } from '../../config/logger.js';
 const stripe = new Stripe(config.STRIPE_SECRET_KEY);
 const log = new Logger('PaymentService');
 
+// Flat delivery fee — WEBSHOP checkouts only. Must stay in the same currency
+// as the product line items ('chf') since Stripe requires one currency per session.
+const WEBSHOP_DELIVERY_FEE = 15.00;
+
 class PaymentService {
   async _ensureWallet(userId) {
     let wallet = await prisma.wallet.findUnique({
@@ -214,6 +218,28 @@ class PaymentService {
       }
 
       if (phone) metadata.customerPhone = phone;
+
+      // ── Delivery fee (WEBSHOP only) ──────────────────────────────
+      // Keep the cart subtotal in metadata so the webhook can rebuild
+      // the exact same total without re-deriving it from product prices.
+      metadata.itemsSubtotal = String(amount);
+      metadata.deliveryFee = String(WEBSHOP_DELIVERY_FEE);
+
+      lineItems.push({
+        price_data: {
+          currency: 'chf',
+          product_data: {
+            name: 'Delivery Fee',
+            description: 'Standard delivery',
+          },
+          unit_amount: Math.round(WEBSHOP_DELIVERY_FEE * 100),
+        },
+        quantity: 1,
+      });
+
+      amount += WEBSHOP_DELIVERY_FEE;
+      // ──────────────────────────────────────────────────────────────
+
       metadata.cartItems = JSON.stringify(cartItems);
 
     } else {
@@ -349,53 +375,6 @@ class PaymentService {
     log.info(`Package "${pkg.name}": +${credits} credits → user ${userId}`);
   }
 
-  // async _saveDonation(session) {
-  //   const m = session.metadata;
-
-  //   await prisma.$transaction(async (tx) => {
-  //     const donation = await tx.donation.create({
-  //       data: {
-  //         donorId: m.userId,
-  //         donorType: m.donorType,
-  //         name: m.donorName,
-  //         phone: m.donorPhone,
-  //         email: m.donorEmail,
-  //         businessName:m.businessName,
-  //         businessType:m.businessType,
-  //         websiteUrl:m.websiteUrl,
-  //         amount: parseInt(m.donationAmount),
-  //         description: m.donationDescription || null,
-  //         location: m.donationLocation || null,
-  //         image: m.donationImage || null,
-  //         benefit: m.benefit,
-  //       },
-  //     });
-
-  //     await tx.payment.updateMany({
-  //       where: { stripeSessionId: session.id },
-  //       data: { donationId: donation.id },
-  //     });
-
-  //     await tx.adCampaign.create({
-  //       data: {
-  //         donorId: m.userId,
-  //         title: `Donation Campaign - ${m.benefit}`,
-  //         description: m.donationDescription || null,
-  //         image: m.donationImage || null,
-  //         budget: parseInt(m.donationAmount),
-  //         spentAmount: 0,
-  //         status: 'PENDING',
-  //         linkUrl: m.websiteUrl,
-  //         donationId: donation.id,
-  //         isActive: true,
-  //         placements: ['HOME'],
-  //       },
-  //     });
-  //   });
-
-  //   log.info(`Donation saved + AdCampaign created for user ${m.userId}`);
-  // }
-
   async _saveDonation(session) {
     const m = session.metadata;
 
@@ -411,9 +390,9 @@ class PaymentService {
         location: m.donationLocation || null,
         image: m.donationImage || null,
         benefit: m.benefit,
-        businessName: m.businessName || null,  // This will now have the value
-        websiteUrl: m.websiteUrl || null,      // This will now have the value
-        businessType: m.businessType || 'LOCAL_BUSINESS',  // This will now have the value
+        businessName: m.businessName || null,
+        websiteUrl: m.websiteUrl || null,
+        businessType: m.businessType || 'LOCAL_BUSINESS',
       };
 
       const donation = await tx.donation.create({
@@ -444,6 +423,7 @@ class PaymentService {
 
     log.info(`Donation saved + AdCampaign created for user ${m.userId}`);
   }
+
   async _saveOrder(session) {
     const m = session.metadata;
     const cartItems = JSON.parse(m.cartItems);
@@ -513,11 +493,19 @@ class PaymentService {
       });
     }
 
+    // ── Delivery fee (WEBSHOP only) ──────────────────────────────────
+    // Pull the fee that was actually charged at checkout time (falls back
+    // to the current constant if it's ever missing from old sessions).
+    const deliveryFee = Number(m.deliveryFee || WEBSHOP_DELIVERY_FEE);
+    totalAmount += deliveryFee;
+    // ──────────────────────────────────────────────────────────────────
+
     await prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
           userId: m.userId,
           totalAmount,
+          deliveryFee,
           status: 'PROCESSING',
           paymentStatus: 'SUCCESS',
           shippingAddress: shippingAddress,
@@ -541,7 +529,7 @@ class PaymentService {
       }
     });
 
-    log.info(`Order created for user ${m.userId} — ${orderItemsData.length} items`);
+    log.info(`Order created for user ${m.userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
   }
 
   async verifyAndUnlock(sessionId, userId) {

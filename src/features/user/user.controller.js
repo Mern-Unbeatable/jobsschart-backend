@@ -87,11 +87,18 @@ class UserController {
     });
   });
 
-  // ─── Admin routes ────────────────────────────────────────────────────────────
+  // ─── Admin routes 
 
   getAllUsers = catchAsync(async (req, res) => {
     this.log.info('Admin: fetching all users');
     const result = await userService.getAllUsers(req.query);
+
+    if (result.users) {
+      result.users = result.users.filter(user => user.id !== req.user.id);
+
+      result.meta.total = result.users.length;
+      result.meta.totalPages = Math.ceil(result.users.length / result.meta.limit);
+    }
 
     ResponseHandler.success(res, {
       message: 'Users fetched successfully',
