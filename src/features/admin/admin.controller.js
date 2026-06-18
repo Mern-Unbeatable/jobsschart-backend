@@ -1,37 +1,37 @@
-// import { catchAsync } from '../../shared/globals/decorators/catch-async.js';
-// import { ResponseHandler } from '../../shared/globals/helpers/response.handler.js';
-// import { Logger } from '../../config/logger.js';
-// import { adminSessionsService } from './admin.service.js';
+import { catchAsync } from '../../shared/globals/decorators/catch-async.js';
+import { ResponseHandler } from '../../shared/globals/helpers/response.handler.js';
+import { Logger } from '../../config/logger.js';
+import { adminDashboardService } from './admin.service.js';
 
-// const log = new Logger('AdminSessionsController');
+const log = new Logger('AdminDashboardController');
 
-// class AdminSessionsController {
+const ALLOWED_PERIODS = ['this_year', 'last_year', '6_months'];
 
-//     getAllSessions = catchAsync(async (req, res) => {
-//         const { page, limit, type, status, search } = req.query;
+class AdminDashboardController {
+    getStats = catchAsync(async (req, res) => {
+        log.info('Fetching dashboard stats', { adminId: req.user.id });
 
-//         log.info('Fetching all sessions', { 
-//             adminId: req.user.id, 
-//             query: { page, limit, type, status, search } 
-//         });
+        const stats = await adminDashboardService.getStats();
 
-//         const result = await adminSessionsService.getAllSessions({
-//             page,
-//             limit,
-//             type,
-//             status,
-//             search,
-//         });
+        ResponseHandler.success(res, {
+            message: 'Dashboard stats fetched successfully',
+            data: stats,
+        });
+    });
 
-//         ResponseHandler.success(res, {
-//             message: 'Sessions fetched successfully',
-//             data: {
-//                 sessions: result.sessions,
-//                 summary: result.summary,
-//             },
-//             meta: result.meta,
-//         });
-//     });
-// }
+    getRevenueChart = catchAsync(async (req, res) => {
+        const { period } = req.query;
+        const selectedPeriod = ALLOWED_PERIODS.includes(period) ? period : 'this_year';
 
-// export const adminSessionsController = new AdminSessionsController();
+        log.info('Fetching revenue chart', { adminId: req.user.id, period: selectedPeriod });
+
+        const chart = await adminDashboardService.getRevenueChart(selectedPeriod);
+
+        ResponseHandler.success(res, {
+            message: 'Revenue chart fetched successfully',
+            data: chart,
+        });
+    });
+}
+
+export const adminDashboardController = new AdminDashboardController();

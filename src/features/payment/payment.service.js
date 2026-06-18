@@ -43,194 +43,7 @@ class PaymentService {
     return customer.id;
   }
 
-  // async createCheckoutSession({
-  //   userId,
-  //   type,
-  //   packageId,
-  //   donationData,
-  //   cartItems,
-  //   shippingAddress,
-  //   phone,
-  // }) {
-  //   await this._ensureWallet(userId);
-
-  //   const stripeCustomerId = await this._getOrCreateStripeCustomer(userId);
-  //   const clientUrl =
-  //     config.FRONTEND_URL || config.CLIENT_URLS?.split(',')[0]?.trim() || 'http://localhost:5173';
-
-  //   let lineItems = [];
-  //   let metadata = { userId, type };
-  //   let amount = 0;
-  //   let creditsAdded = 0;
-
-  //   if (type === 'PACKAGE') {
-  //     if (!packageId) throw new Error('packageId is required for PACKAGE type');
-
-  //     const pkg = await prisma.package.findUnique({
-  //       where: { id: packageId, isActive: true },
-  //     });
-  //     if (!pkg) throw new Error('Package not found or inactive');
-
-  //     amount = Number(pkg.price);
-  //     creditsAdded = Number(pkg.credits || pkg.minutes || 0);
-  //     metadata.packageId = packageId;
-
-  //     lineItems = [{
-  //       price_data: {
-  //         currency: 'chf',
-  //         product_data: {
-  //           name: pkg.name,
-  //           description: pkg.description || `${creditsAdded} credits package`,
-  //         },
-  //         unit_amount: Math.round(amount * 100),
-  //       },
-  //       quantity: 1,
-  //     }];
-
-  //   } else if (type === 'DONATION') {
-  //     if (!donationData) throw new Error('donationData is required for DONATION type');
-
-  //     let donationAmount = donationData.amount;
-  //     if (typeof donationAmount === 'string') {
-  //       donationAmount = parseFloat(donationAmount);
-  //     }
-
-  //     const { donorType, name, phone: donorPhone, email, description, location, image, benefit, websiteUrl,businessType ,businessName} = donationData;
-
-  //     if (!donorType || !name || !donorPhone || !email || !donationAmount || !benefit) {
-  //       throw new Error('donorType, name, phone, email, amount, benefit are required');
-  //     }
-
-  //     amount = Number(donationAmount);
-  //     if (isNaN(amount) || amount <= 0) throw new Error('Invalid donation amount');
-
-  //     let imageUrl = image;
-  //     if (!imageUrl && donationData.image) {
-  //       imageUrl = donationData.image;
-  //     }
-
-  //     metadata.donorType = donorType;
-  //      metadata.businessName = businessName;
-  //      metadata.businessType = businessType;
-  //      metadata.websiteUrl = websiteUrl;
-  //     metadata.donorName = name.substring(0, 490);
-  //     metadata.donorPhone = donorPhone.substring(0, 40);
-  //     metadata.donorEmail = email.substring(0, 490);
-  //     metadata.donationAmount = String(donationAmount);
-  //     metadata.benefit = benefit.substring(0, 490);
-  //     if (description) metadata.donationDescription = description.substring(0, 490);
-  //     if (location) metadata.donationLocation = location.substring(0, 490);
-  //     if (imageUrl) metadata.donationImage = imageUrl.substring(0, 490);
-
-  //     lineItems = [{
-  //       price_data: {
-  //         currency: 'chf',
-  //         product_data: {
-  //           name: `Donation: ${benefit}`,
-  //           description: description || `Donation for ${benefit}`,
-  //         },
-  //         unit_amount: Math.round(amount * 100),
-  //       },
-  //       quantity: 1,
-  //     }];
-
-  //   } else if (type === 'WEBSHOP') {
-  //     if (!cartItems || cartItems.length === 0) {
-  //       throw new Error('cartItems is required for WEBSHOP type');
-  //     }
-
-  //     const productIds = cartItems.map((i) => i.productId);
-  //     const products = await prisma.product.findMany({
-  //       where: { id: { in: productIds }, isActive: true },
-  //     });
-
-  //     if (products.length !== productIds.length) {
-  //       throw new Error('One or more products not found or inactive');
-  //     }
-
-  //     lineItems = [];
-  //     for (const item of cartItems) {
-  //       const product = products.find((p) => p.id === item.productId);
-  //       if (product.stock < item.quantity) {
-  //         throw new Error(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
-  //       }
-  //       amount += Number(product.price) * item.quantity;
-  //       lineItems.push({
-  //         price_data: {
-  //           currency: 'chf',
-  //           product_data: {
-  //             name: product.name,
-  //             description: product.description?.substring(0, 500),
-  //           },
-  //           unit_amount: Math.round(Number(product.price) * 100),
-  //         },
-  //         quantity: item.quantity,
-  //       });
-  //     }
-
-  //     // CRITICAL FIX: Store shipping address as separate metadata fields
-  //     if (shippingAddress) {
-  //       // Store complete address as JSON
-  //       const completeAddress = {
-  //         street: shippingAddress.street || '',
-  //         city: shippingAddress.city || '',
-  //         postalCode: shippingAddress.postalCode || '',
-  //         country: shippingAddress.country || '',
-  //         name: shippingAddress.name || '',
-  //         email: shippingAddress.email || '',
-  //         phone: shippingAddress.phone || ''
-  //       };
-
-  //       metadata.shippingAddress = JSON.stringify(completeAddress);
-
-  //       // ALSO store each field separately to ensure they survive Stripe
-  //       metadata.shipping_street = completeAddress.street;
-  //       metadata.shipping_city = completeAddress.city;
-  //       metadata.shipping_postalCode = completeAddress.postalCode;
-  //       metadata.shipping_country = completeAddress.country;
-  //       metadata.shipping_name = completeAddress.name;
-  //       metadata.shipping_email = completeAddress.email;
-  //       metadata.shipping_phone = completeAddress.phone;
-
-  //       log.info(`📦 WEBSHOP - Original shippingAddress: ${JSON.stringify(shippingAddress)}`);
-  //       log.info(`📦 WEBSHOP - Complete address stored: ${JSON.stringify(completeAddress)}`);
-  //     }
-
-  //     if (phone) metadata.customerPhone = phone;
-  //     metadata.cartItems = JSON.stringify(cartItems);
-
-  //   } else {
-  //     throw new Error('Invalid type. Use PACKAGE, DONATION, or WEBSHOP');
-  //   }
-
-  //   const session = await stripe.checkout.sessions.create({
-  //     customer: stripeCustomerId,
-  //     payment_method_types: ['card'],
-  //     line_items: lineItems,
-  //     mode: 'payment',
-  //     success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}&type=${type}`,
-  //     cancel_url: `${clientUrl}/payment/cancel?type=${type}`,
-  //     metadata,
-  //   });
-
-  //   await prisma.payment.create({
-  //     data: {
-  //       userId,
-  //       packageId: packageId || null,
-  //       amount,
-  //       creditsAdded: creditsAdded || null,
-  //       type,
-  //       status: 'PENDING',
-  //       stripeSessionId: session.id,
-  //       stripePaymentIntentId: '',
-  //       stripeCustomerId,
-  //     },
-  //   });
-
-  //   log.info(`✅ Checkout created: ${session.id} | type=${type} | user=${userId} | amount=${amount}`);
-  //   return { url: session.url, sessionId: session.id };
-  // }
-async createCheckoutSession({
+  async createCheckoutSession({
     userId,
     type,
     packageId,
@@ -238,12 +51,12 @@ async createCheckoutSession({
     cartItems,
     shippingAddress,
     phone,
-}) {
+  }) {
     await this._ensureWallet(userId);
 
     const stripeCustomerId = await this._getOrCreateStripeCustomer(userId);
     const clientUrl =
-        config.FRONTEND_URL || config.CLIENT_URLS?.split(',')[0]?.trim() || 'http://localhost:5173';
+      config.FRONTEND_URL || config.CLIENT_URLS?.split(',')[0]?.trim() || 'http://localhost:5173';
 
     let lineItems = [];
     let metadata = { userId, type };
@@ -251,189 +64,189 @@ async createCheckoutSession({
     let creditsAdded = 0;
 
     if (type === 'PACKAGE') {
-        if (!packageId) throw new Error('packageId is required for PACKAGE type');
+      if (!packageId) throw new Error('packageId is required for PACKAGE type');
 
-        const pkg = await prisma.package.findUnique({
-            where: { id: packageId, isActive: true },
-        });
-        if (!pkg) throw new Error('Package not found or inactive');
+      const pkg = await prisma.package.findUnique({
+        where: { id: packageId, isActive: true },
+      });
+      if (!pkg) throw new Error('Package not found or inactive');
 
-        amount = Number(pkg.price);
-        creditsAdded = Number(pkg.credits || pkg.minutes || 0);
-        metadata.packageId = packageId;
+      amount = Number(pkg.price);
+      creditsAdded = Number(pkg.credits || pkg.minutes || 0);
+      metadata.packageId = packageId;
 
-        lineItems = [{
-            price_data: {
-                currency: 'chf',
-                product_data: {
-                    name: pkg.name,
-                    description: pkg.description || `${creditsAdded} credits package`,
-                },
-                unit_amount: Math.round(amount * 100),
-            },
-            quantity: 1,
-        }];
+      lineItems = [{
+        price_data: {
+          currency: 'chf',
+          product_data: {
+            name: pkg.name,
+            description: pkg.description || `${creditsAdded} credits package`,
+          },
+          unit_amount: Math.round(amount * 100),
+        },
+        quantity: 1,
+      }];
 
     } else if (type === 'DONATION') {
-        if (!donationData) throw new Error('donationData is required for DONATION type');
+      if (!donationData) throw new Error('donationData is required for DONATION type');
 
-        let donationAmount = donationData.amount;
-        if (typeof donationAmount === 'string') {
-            donationAmount = parseFloat(donationAmount);
-        }
+      let donationAmount = donationData.amount;
+      if (typeof donationAmount === 'string') {
+        donationAmount = parseFloat(donationAmount);
+      }
 
-        const { 
-            donorType, 
-            name, 
-            phone: donorPhone, 
-            email, 
-            description, 
-            location, 
-            image, 
-            benefit, 
-            websiteUrl, 
-            businessType, 
-            businessName 
-        } = donationData;
+      const {
+        donorType,
+        name,
+        phone: donorPhone,
+        email,
+        description,
+        location,
+        image,
+        benefit,
+        websiteUrl,
+        businessType,
+        businessName
+      } = donationData;
 
-        if (!donorType || !name || !donorPhone || !email || !donationAmount || !benefit) {
-            throw new Error('donorType, name, phone, email, amount, benefit are required');
-        }
+      if (!donorType || !name || !donorPhone || !email || !donationAmount || !benefit) {
+        throw new Error('donorType, name, phone, email, amount, benefit are required');
+      }
 
-        amount = Number(donationAmount);
-        if (isNaN(amount) || amount <= 0) throw new Error('Invalid donation amount');
+      amount = Number(donationAmount);
+      if (isNaN(amount) || amount <= 0) throw new Error('Invalid donation amount');
 
-        let imageUrl = image;
-        if (!imageUrl && donationData.image) {
-            imageUrl = donationData.image;
-        }
+      let imageUrl = image;
+      if (!imageUrl && donationData.image) {
+        imageUrl = donationData.image;
+      }
 
-        metadata.donorType = donorType;
-        metadata.donorName = name.substring(0, 490);
-        metadata.donorPhone = donorPhone.substring(0, 40);
-        metadata.donorEmail = email.substring(0, 490);
-        metadata.donationAmount = String(donationAmount);
-        metadata.benefit = benefit.substring(0, 490);
-        
-        // CRITICAL FIX: Add business fields to metadata
-        if (businessName && businessName.trim() !== '') {
-            metadata.businessName = businessName.substring(0, 490);
-        }
-        if (websiteUrl && websiteUrl.trim() !== '') {
-            metadata.websiteUrl = websiteUrl.substring(0, 490);
-        }
-        if (businessType) {
-            metadata.businessType = businessType;
-        }
-        
-        if (description) metadata.donationDescription = description.substring(0, 490);
-        if (location) metadata.donationLocation = location.substring(0, 490);
-        if (imageUrl) metadata.donationImage = imageUrl.substring(0, 490);
+      metadata.donorType = donorType;
+      metadata.donorName = name.substring(0, 490);
+      metadata.donorPhone = donorPhone.substring(0, 40);
+      metadata.donorEmail = email.substring(0, 490);
+      metadata.donationAmount = String(donationAmount);
+      metadata.benefit = benefit.substring(0, 490);
 
-        lineItems = [{
-            price_data: {
-                currency: 'chf',
-                product_data: {
-                    name: `Donation: ${benefit}`,
-                    description: description || `Donation for ${benefit}`,
-                },
-                unit_amount: Math.round(amount * 100),
-            },
-            quantity: 1,
-        }];
+      // CRITICAL FIX: Add business fields to metadata
+      if (businessName && businessName.trim() !== '') {
+        metadata.businessName = businessName.substring(0, 490);
+      }
+      if (websiteUrl && websiteUrl.trim() !== '') {
+        metadata.websiteUrl = websiteUrl.substring(0, 490);
+      }
+      if (businessType) {
+        metadata.businessType = businessType;
+      }
+
+      if (description) metadata.donationDescription = description.substring(0, 490);
+      if (location) metadata.donationLocation = location.substring(0, 490);
+      if (imageUrl) metadata.donationImage = imageUrl.substring(0, 490);
+
+      lineItems = [{
+        price_data: {
+          currency: 'chf',
+          product_data: {
+            name: `Donation: ${benefit}`,
+            description: description || `Donation for ${benefit}`,
+          },
+          unit_amount: Math.round(amount * 100),
+        },
+        quantity: 1,
+      }];
 
     } else if (type === 'WEBSHOP') {
-        if (!cartItems || cartItems.length === 0) {
-            throw new Error('cartItems is required for WEBSHOP type');
-        }
+      if (!cartItems || cartItems.length === 0) {
+        throw new Error('cartItems is required for WEBSHOP type');
+      }
 
-        const productIds = cartItems.map((i) => i.productId);
-        const products = await prisma.product.findMany({
-            where: { id: { in: productIds }, isActive: true },
+      const productIds = cartItems.map((i) => i.productId);
+      const products = await prisma.product.findMany({
+        where: { id: { in: productIds }, isActive: true },
+      });
+
+      if (products.length !== productIds.length) {
+        throw new Error('One or more products not found or inactive');
+      }
+
+      lineItems = [];
+      for (const item of cartItems) {
+        const product = products.find((p) => p.id === item.productId);
+        if (product.stock < item.quantity) {
+          throw new Error(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
+        }
+        amount += Number(product.price) * item.quantity;
+        lineItems.push({
+          price_data: {
+            currency: 'chf',
+            product_data: {
+              name: product.name,
+              description: product.description?.substring(0, 500),
+            },
+            unit_amount: Math.round(Number(product.price) * 100),
+          },
+          quantity: item.quantity,
         });
+      }
 
-        if (products.length !== productIds.length) {
-            throw new Error('One or more products not found or inactive');
-        }
+      if (shippingAddress) {
+        const completeAddress = {
+          street: shippingAddress.street || '',
+          city: shippingAddress.city || '',
+          postalCode: shippingAddress.postalCode || '',
+          country: shippingAddress.country || '',
+          name: shippingAddress.name || '',
+          email: shippingAddress.email || '',
+          phone: shippingAddress.phone || ''
+        };
 
-        lineItems = [];
-        for (const item of cartItems) {
-            const product = products.find((p) => p.id === item.productId);
-            if (product.stock < item.quantity) {
-                throw new Error(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
-            }
-            amount += Number(product.price) * item.quantity;
-            lineItems.push({
-                price_data: {
-                    currency: 'chf',
-                    product_data: {
-                        name: product.name,
-                        description: product.description?.substring(0, 500),
-                    },
-                    unit_amount: Math.round(Number(product.price) * 100),
-                },
-                quantity: item.quantity,
-            });
-        }
+        metadata.shippingAddress = JSON.stringify(completeAddress);
+        metadata.shipping_street = completeAddress.street;
+        metadata.shipping_city = completeAddress.city;
+        metadata.shipping_postalCode = completeAddress.postalCode;
+        metadata.shipping_country = completeAddress.country;
+        metadata.shipping_name = completeAddress.name;
+        metadata.shipping_email = completeAddress.email;
+        metadata.shipping_phone = completeAddress.phone;
 
-        if (shippingAddress) {
-            const completeAddress = {
-                street: shippingAddress.street || '',
-                city: shippingAddress.city || '',
-                postalCode: shippingAddress.postalCode || '',
-                country: shippingAddress.country || '',
-                name: shippingAddress.name || '',
-                email: shippingAddress.email || '',
-                phone: shippingAddress.phone || ''
-            };
+        log.info(`📦 WEBSHOP - Original shippingAddress: ${JSON.stringify(shippingAddress)}`);
+        log.info(`📦 WEBSHOP - Complete address stored: ${JSON.stringify(completeAddress)}`);
+      }
 
-            metadata.shippingAddress = JSON.stringify(completeAddress);
-            metadata.shipping_street = completeAddress.street;
-            metadata.shipping_city = completeAddress.city;
-            metadata.shipping_postalCode = completeAddress.postalCode;
-            metadata.shipping_country = completeAddress.country;
-            metadata.shipping_name = completeAddress.name;
-            metadata.shipping_email = completeAddress.email;
-            metadata.shipping_phone = completeAddress.phone;
-
-            log.info(`📦 WEBSHOP - Original shippingAddress: ${JSON.stringify(shippingAddress)}`);
-            log.info(`📦 WEBSHOP - Complete address stored: ${JSON.stringify(completeAddress)}`);
-        }
-
-        if (phone) metadata.customerPhone = phone;
-        metadata.cartItems = JSON.stringify(cartItems);
+      if (phone) metadata.customerPhone = phone;
+      metadata.cartItems = JSON.stringify(cartItems);
 
     } else {
-        throw new Error('Invalid type. Use PACKAGE, DONATION, or WEBSHOP');
+      throw new Error('Invalid type. Use PACKAGE, DONATION, or WEBSHOP');
     }
 
     const session = await stripe.checkout.sessions.create({
-        customer: stripeCustomerId,
-        payment_method_types: ['card'],
-        line_items: lineItems,
-        mode: 'payment',
-        success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}&type=${type}`,
-        cancel_url: `${clientUrl}/payment/cancel?type=${type}`,
-        metadata,
+      customer: stripeCustomerId,
+      payment_method_types: ['card'],
+      line_items: lineItems,
+      mode: 'payment',
+      success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}&type=${type}`,
+      cancel_url: `${clientUrl}/payment/cancel?type=${type}`,
+      metadata,
     });
 
     await prisma.payment.create({
-        data: {
-            userId,
-            packageId: packageId || null,
-            amount,
-            creditsAdded: creditsAdded || null,
-            type,
-            status: 'PENDING',
-            stripeSessionId: session.id,
-            stripePaymentIntentId: '',
-            stripeCustomerId,
-        },
+      data: {
+        userId,
+        packageId: packageId || null,
+        amount,
+        creditsAdded: creditsAdded || null,
+        type,
+        status: 'PENDING',
+        stripeSessionId: session.id,
+        stripePaymentIntentId: '',
+        stripeCustomerId,
+      },
     });
 
     log.info(`✅ Checkout created: ${session.id} | type=${type} | user=${userId} | amount=${amount}`);
     return { url: session.url, sessionId: session.id };
-}
+  }
 
   async handleWebhook(rawBody, signature) {
     let event;
@@ -583,54 +396,54 @@ async createCheckoutSession({
   //   log.info(`Donation saved + AdCampaign created for user ${m.userId}`);
   // }
 
-async _saveDonation(session) {
+  async _saveDonation(session) {
     const m = session.metadata;
 
     await prisma.$transaction(async (tx) => {
-        const donationData = {
-            donorId: m.userId,
-            donorType: m.donorType,
-            name: m.donorName,
-            phone: m.donorPhone,
-            email: m.donorEmail,
-            amount: parseInt(m.donationAmount),
-            description: m.donationDescription || null,
-            location: m.donationLocation || null,
-            image: m.donationImage || null,
-            benefit: m.benefit,
-            businessName: m.businessName || null,  // This will now have the value
-            websiteUrl: m.websiteUrl || null,      // This will now have the value
-            businessType: m.businessType || 'LOCAL_BUSINESS',  // This will now have the value
-        };
+      const donationData = {
+        donorId: m.userId,
+        donorType: m.donorType,
+        name: m.donorName,
+        phone: m.donorPhone,
+        email: m.donorEmail,
+        amount: parseInt(m.donationAmount),
+        description: m.donationDescription || null,
+        location: m.donationLocation || null,
+        image: m.donationImage || null,
+        benefit: m.benefit,
+        businessName: m.businessName || null,  // This will now have the value
+        websiteUrl: m.websiteUrl || null,      // This will now have the value
+        businessType: m.businessType || 'LOCAL_BUSINESS',  // This will now have the value
+      };
 
-        const donation = await tx.donation.create({
-            data: donationData,
-        });
+      const donation = await tx.donation.create({
+        data: donationData,
+      });
 
-        await tx.payment.updateMany({
-            where: { stripeSessionId: session.id },
-            data: { donationId: donation.id },
-        });
+      await tx.payment.updateMany({
+        where: { stripeSessionId: session.id },
+        data: { donationId: donation.id },
+      });
 
-        await tx.adCampaign.create({
-            data: {
-                donorId: m.userId,
-                title: `Donation Campaign - ${m.benefit}`,
-                description: m.donationDescription || null,
-                image: m.donationImage || null,
-                budget: parseInt(m.donationAmount),
-                spentAmount: 0,
-                status: 'PENDING',
-                linkUrl: m.websiteUrl || null,
-                donationId: donation.id,
-                isActive: true,
-                placements: ['HOME'],
-            },
-        });
+      await tx.adCampaign.create({
+        data: {
+          donorId: m.userId,
+          title: `Donation Campaign - ${m.benefit}`,
+          description: m.donationDescription || null,
+          image: m.donationImage || null,
+          budget: parseInt(m.donationAmount),
+          spentAmount: 0,
+          status: 'PENDING',
+          linkUrl: m.websiteUrl || null,
+          donationId: donation.id,
+          isActive: true,
+          placements: ['HOME'],
+        },
+      });
     });
 
     log.info(`Donation saved + AdCampaign created for user ${m.userId}`);
-}
+  }
   async _saveOrder(session) {
     const m = session.metadata;
     const cartItems = JSON.parse(m.cartItems);

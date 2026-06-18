@@ -1,234 +1,179 @@
+import { prisma } from '../../config/db.js';
+import { Logger } from '../../config/logger.js';
 
-// import { prisma } from '../../config/db.js';
-// import { Logger } from '../../config/logger.js';
-// const log = new Logger('AdminSessionsService');
+const log = new Logger('AdminDashboardService');
 
-// class AdminSessionsService {
-//     async getAllSessions(queryParams = {}) {
-//         const page    = Math.max(1, parseInt(queryParams.page)  || 1);
-//         const limit   = Math.min(parseInt(queryParams.limit)    || 20, 100);
-//         const skip    = (page - 1) * limit;
-//         const type    = queryParams.type;  
-//         const status  = queryParams.status;  
-//         const search  = queryParams.search; 
-//         let callSessions = [];
+class AdminDashboardService {
+    async getStats() {
+        const [
+            totalUsers,
+            totalConsultants,
+            totalCalls,
+            totalChats,
+            completedCalls,
+            completedChats,
+            activeCalls,
+            activeChats,
+            donationSum,
+            webshopSum,
+        ] = await Promise.all([
+            prisma.user.count({ where: { role: 'USER' } }),
+            prisma.consultant.count(),
 
-//         const shouldFetchCalls = !type || type === 'PHONE' || type === 'VIDEO';
+            // all calls ever created (any status)
+            prisma.call.count(),
+            // chats that actually had a real session (mirrors AdminSessionsService logic)
+            prisma.chatConversation.count({ where: { sessionStatus: { in: ['ACTIVE', 'ENDED'] } } }),
 
-//         if (shouldFetchCalls) {
-//             const callWhere = {
-//                 status: status
-//                     ? status === 'COMPLETED' ? 'COMPLETED'
-//                     : status === 'ACTIVE'    ? 'ACTIVE'
-//                     : status === 'CANCELLED' ? 'CANCELLED'
-//                     : undefined
-//                     : { in: ['COMPLETED', 'ACTIVE', 'CANCELLED', 'PENDING'] },
-//             };
+            // only completed ones count toward revenue
+            prisma.call.aggregate({
+                where: { status: 'COMPLETED' },
+                _sum: { totalCost: true },
+            }),
+            prisma.chatConversation.aggregate({
+                where: { sessionStatus: 'ENDED' },
+                _sum: { totalCost: true },
+            }),
 
-//             if (type === 'PHONE') callWhere.callType = 'PHONE';
-//             if (type === 'VIDEO') callWhere.callType = 'VIDEO';
+            prisma.call.count({ where: { status: 'ACTIVE' } }),
+            prisma.chatConversation.count({ where: { sessionStatus: 'ACTIVE' } }),
 
-//             const calls = await prisma.call.findMany({
-//                 where: callWhere,
-//                 include: {
-//                     user: {
-//                         select: { id: true, name: true, email: true, avatar: true },
-//                     },
-//                     earnings: true,
-//                 },
-//                 orderBy: { createdAt: 'desc' },
-//             });
+            prisma.payment.aggregate({
+                where: { type: 'DONATION', status: 'SUCCESS' },
+                _sum: { amount: true },
+            }),
+            prisma.payment.aggregate({
+                where: { type: 'WEBSHOP', status: 'SUCCESS' },
+                _sum: { amount: true },
+            }),
+        ]);
 
-     
-//             const callSessionsRaw = await Promise.all(
-//                 calls.map(async (call) => {
-//                     const consultantUser = await prisma.user.findUnique({
-//                         where: { id: call.consultantId },
-//                         select: {
-//                             id: true, name: true, email: true, avatar: true,
-//                             consultant: { select: { pricePerMinute: true } },
-//                         },
-//                     });
+        const consultationRevenue =
+            Number(completedCalls._sum.totalCost || 0) + Number(completedChats._sum.totalCost || 0);
+        const donationRevenue = Number(donationSum._sum.amount || 0);
+        const webshopRevenue = Number(webshopSum._sum.amount || 0);
 
-//                     // Name search filter
-//                     if (search) {
-//                         const q = search.toLowerCase();
-//                         const consultantName = (consultantUser?.name || '').toLowerCase();
-//                         const clientName     = (call.user?.name     || '').toLowerCase();
-//                         if (!consultantName.includes(q) && !clientName.includes(q)) return null;
-//                     }
+        return {
+            totalUsers,
+            totalConsultants,
+            totalConsultations: totalCalls + totalChats,
+            totalRevenue: Number((consultationRevenue + donationRevenue + webshopRevenue).toFixed(2)),
+            activeCalls: activeCalls + activeChats,
+        };
+    }
 
-//                     const durationMins = call.durationSeconds
-//                         ? Number((call.durationSeconds / 60).toFixed(2))
-//                         : 0;
+    // ─────────────────────────────────────────────────────────
+    // 2. Revenue chart: Donation / Webshop / Consultant per month
+    //    period: 'this_year' | 'last_year' | '6_months'
+    // ─────────────────────────────────────────────────────────
+    _getDateRange(period) {
+        const now = new Date();
+        let start;
+        let end;
+        let months;
 
-//                     const earning = call.earnings?.[0] || null;
-//                     const consultantEarning = earning
-//                         ? Number(earning.consultantShare)
-//                         : Number(((call.totalCost || 0) * 0.5).toFixed(2));
+        switch (period) {
+            case 'last_year':
+                start = new Date(now.getFullYear() - 1, 0, 1);
+                end = new Date(now.getFullYear(), 0, 1);
+                months = 12;
+                break;
 
-//                     return {
-//                         id:                call.id,
-//                         type:              call.callType,      
-//                         status:            call.status,
-//                         consultantId:      call.consultantId,
-//                         consultantName:    consultantUser?.name  || 'Unknown',
-//                         consultantEmail:   consultantUser?.email || '',
-//                         consultantAvatar:  consultantUser?.avatar || null,
-//                         clientId:          call.userId,
-//                         clientName:        call.user?.name  || 'Unknown',
-//                         clientEmail:       call.user?.email || '',
-//                         clientAvatar:      call.user?.avatar || null,
-//                         durationMinutes:   durationMins,
-//                         durationSeconds:   call.durationSeconds || 0,
-//                         totalCost:         Number(call.totalCost   || 0),
-//                         consultantEarning: consultantEarning,
-//                         platformEarning:   Number(((call.totalCost || 0) * 0.5).toFixed(2)),
-//                         startTime:         call.startTime,
-//                         endTime:           call.endTime,
-//                         date:              call.createdAt,
-//                         pricePerMinute:    Number(consultantUser?.consultant?.pricePerMinute || 2.5),
-//                     };
-//                 })
-//             );
+            case '6_months':
+                end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+                start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+                months = 6;
+                break;
 
-//             callSessions = callSessionsRaw.filter(Boolean);
-//         }
+            case 'this_year':
+            default:
+                start = new Date(now.getFullYear(), 0, 1);
+                end = new Date(now.getFullYear() + 1, 0, 1);
+                months = 12;
+        }
 
-//         // ─────────────────────────────────────────────────────────
-//         // 2. CHAT sessions
-//         // ─────────────────────────────────────────────────────────
-//         let chatSessions = [];
+        return { start, end, months };
+    }
 
-//         const shouldFetchChat = !type || type === 'CHAT';
+    async getRevenueChart(period = 'this_year') {
+        const { start, end, months } = this._getDateRange(period);
 
-//         if (shouldFetchChat) {
-//             const chatWhere = {};
+        const [donationRows, webshopRows, callRows, chatRows] = await Promise.all([
+            prisma.$queryRaw`
+                SELECT date_trunc('month', "createdAt") AS month, SUM(amount)::float AS total
+                FROM payments
+                WHERE type = 'DONATION' AND status = 'SUCCESS'
+                  AND "createdAt" >= ${start} AND "createdAt" < ${end}
+                GROUP BY month ORDER BY month;
+            `,
+            prisma.$queryRaw`
+                SELECT date_trunc('month', "createdAt") AS month, SUM(amount)::float AS total
+                FROM payments
+                WHERE type = 'WEBSHOP' AND status = 'SUCCESS'
+                  AND "createdAt" >= ${start} AND "createdAt" < ${end}
+                GROUP BY month ORDER BY month;
+            `,
+            prisma.$queryRaw`
+                SELECT date_trunc('month', "createdAt") AS month, SUM("totalCost")::float AS total
+                FROM calls
+                WHERE status = 'COMPLETED'
+                  AND "createdAt" >= ${start} AND "createdAt" < ${end}
+                GROUP BY month ORDER BY month;
+            `,
+            prisma.$queryRaw`
+                SELECT date_trunc('month', "createdAt") AS month, SUM("totalCost")::float AS total
+                FROM chat_conversations
+                WHERE "sessionStatus" = 'ENDED'
+                  AND "createdAt" >= ${start} AND "createdAt" < ${end}
+                GROUP BY month ORDER BY month;
+            `,
+        ]);
 
-//             if (status === 'COMPLETED' || status === 'ACTIVE' || status === 'CANCELLED') {
-//                 // ChatConversation has sessionStatus: IDLE | ACTIVE | ENDED
-//                 if (status === 'COMPLETED') chatWhere.sessionStatus = 'ENDED';
-//                 else if (status === 'ACTIVE') chatWhere.sessionStatus = 'ACTIVE';
-//                 // CANCELLED maps to nothing meaningful in chat
-//             }
+        // build empty month buckets across the range so missing months show as 0
+        const buckets = [];
+        const cursor = new Date(start);
+        for (let i = 0; i < months; i++) {
+            buckets.push({
+                key: `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`,
+                label: cursor.toLocaleString('en-US', { month: 'short' }),
+                donation: 0,
+                webshop: 0,
+                consultant: 0,
+            });
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
 
-//             // Only fetch conversations that had a real session (not just opened)
-//             chatWhere.sessionStatus = chatWhere.sessionStatus || { in: ['ACTIVE', 'ENDED'] };
+        const keyOf = (rawMonth) => {
+            const d = new Date(rawMonth);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        };
 
-//             const chats = await prisma.chatConversation.findMany({
-//                 where: chatWhere,
-//                 include: {
-//                     participants: {
-//                         include: {
-//                             user: {
-//                                 select: {
-//                                     id: true, name: true, email: true, avatar: true, role: true,
-//                                     consultant: { select: { pricePerMinute: true } },
-//                                 },
-//                             },
-//                         },
-//                     },
-//                     billing: {
-//                         orderBy: { minuteNumber: 'desc' },
-//                         take: 1,
-//                     },
-//                 },
-//                 orderBy: { updatedAt: 'desc' },
-//             });
+        const fillBucket = (rows, field) => {
+            rows.forEach((row) => {
+                const bucket = buckets.find((b) => b.key === keyOf(row.month));
+                if (bucket) bucket[field] = Number(row.total || 0);
+            });
+        };
 
-//             const chatSessionsRaw = chats.map((chat) => {
-//                 const userParticipant       = chat.participants.find(p => p.user.role === 'USER');
-//                 const consultantParticipant = chat.participants.find(p => p.user.role !== 'USER');
+        fillBucket(donationRows, 'donation');
+        fillBucket(webshopRows, 'webshop');
 
-//                 if (!userParticipant || !consultantParticipant) return null;
+        // calls + chats together make up the "Consultant" series
+        [...callRows, ...chatRows].forEach((row) => {
+            const bucket = buckets.find((b) => b.key === keyOf(row.month));
+            if (bucket) bucket.consultant += Number(row.total || 0);
+        });
 
-//                 // Name search filter
-//                 if (search) {
-//                     const q = search.toLowerCase();
-//                     const cName = (consultantParticipant.user.name || '').toLowerCase();
-//                     const uName = (userParticipant.user.name       || '').toLowerCase();
-//                     if (!cName.includes(q) && !uName.includes(q)) return null;
-//                 }
+        return {
+            period,
+            data: buckets.map((b) => ({
+                month: b.label,
+                donation: Number(b.donation.toFixed(2)),
+                webshop: Number(b.webshop.toFixed(2)),
+                consultant: Number(b.consultant.toFixed(2)),
+            })),
+        };
+    }
+}
 
-//                 const totalMinutes = Number(chat.totalMinutes  || 0);
-//                 const totalCost    = Number(chat.totalCost      || 0);
-//                 const consultantEarning = Number((totalCost * 0.5).toFixed(2));
-//                 const platformEarning   = Number((totalCost * 0.5).toFixed(2));
-
-//                 // Map chatStatus → unified status
-//                 let unifiedStatus = 'ACTIVE';
-//                 if (chat.sessionStatus === 'ENDED') unifiedStatus = 'COMPLETED';
-//                 else if (chat.sessionStatus === 'IDLE') unifiedStatus = 'CANCELLED';
-
-//                 return {
-//                     id:                chat.id,
-//                     type:              'CHAT',
-//                     status:            unifiedStatus,
-//                     consultantId:      consultantParticipant.userId,
-//                     consultantName:    consultantParticipant.user.name  || 'Unknown',
-//                     consultantEmail:   consultantParticipant.user.email || '',
-//                     consultantAvatar:  consultantParticipant.user.avatar || null,
-//                     clientId:          userParticipant.userId,
-//                     clientName:        userParticipant.user.name  || 'Unknown',
-//                     clientEmail:       userParticipant.user.email || '',
-//                     clientAvatar:      userParticipant.user.avatar || null,
-//                     durationMinutes:   totalMinutes,
-//                     durationSeconds:   totalMinutes * 60,
-//                     totalCost:         totalCost,
-//                     consultantEarning: consultantEarning,
-//                     platformEarning:   platformEarning,
-//                     startTime:         chat.startedAt,
-//                     endTime:           chat.endedAt,
-//                     date:              chat.createdAt,
-//                     pricePerMinute:    Number(consultantParticipant.user.consultant?.pricePerMinute || 2.5),
-//                 };
-//             });
-
-//             chatSessions = chatSessionsRaw.filter(Boolean);
-//         }
-
-//         // ─────────────────────────────────────────────────────────
-//         // 3. Merge + Sort by date desc + Paginate
-//         // ─────────────────────────────────────────────────────────
-//         const allSessions = [...callSessions, ...chatSessions].sort(
-//             (a, b) => new Date(b.date) - new Date(a.date)
-//         );
-
-//         const total      = allSessions.length;
-//         const paginated  = allSessions.slice(skip, skip + limit);
-
-//         // ─────────────────────────────────────────────────────────
-//         // 4. Summary stats (for dashboard cards)
-//         // ─────────────────────────────────────────────────────────
-//         const completed = allSessions.filter(s => s.status === 'COMPLETED');
-//         const summary   = {
-//             totalSessions:       total,
-//             completedSessions:   completed.length,
-//             activeSessions:      allSessions.filter(s => s.status === 'ACTIVE').length,
-//             totalRevenue:        Number(completed.reduce((sum, s) => sum + s.totalCost,         0).toFixed(2)),
-//             totalEarningsPaid:   Number(completed.reduce((sum, s) => sum + s.consultantEarning, 0).toFixed(2)),
-//             platformRevenue:     Number(completed.reduce((sum, s) => sum + s.platformEarning,   0).toFixed(2)),
-//             totalMinutes:        Number(completed.reduce((sum, s) => sum + s.durationMinutes,    0).toFixed(2)),
-//             byType: {
-//                 PHONE: allSessions.filter(s => s.type === 'PHONE').length,
-//                 VIDEO: allSessions.filter(s => s.type === 'VIDEO').length,
-//                 CHAT:  allSessions.filter(s => s.type === 'CHAT').length,
-//             },
-//         };
-
-//         return {
-//             sessions: paginated,
-//             meta: {
-//                 page,
-//                 limit,
-//                 total,
-//                 totalPages: Math.ceil(total / limit),
-//             },
-//             summary,
-//         };
-//     }
-
-
-// }
-
-// export const adminSessionsService = new AdminSessionsService();
+export const adminDashboardService = new AdminDashboardService();

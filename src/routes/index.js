@@ -1,5 +1,6 @@
 
 import { adCampaignRoutes } from '../features/adcampaign/adcampaign.route.js';
+import { adminDashboardRoutes } from '../features/admin/admin.route.js';
 import { authRoutes } from '../features/auth/auth.routes.js';
 import { availabilityRoutes } from '../features/availability/availability.route.js';
 import { blogRoutes } from '../features/blog/blog.route.js';
@@ -53,4 +54,5 @@ export default (app) => {
   app.use(`${BASE_PATH}/payouts`, payoutRoutes);
   app.use(`${BASE_PATH}/category`, categoryRoutes);
   app.use(`${BASE_PATH}/topics`, topicRoutes);
+  app.use(`${BASE_PATH}/admin`, adminDashboardRoutes);
 };
