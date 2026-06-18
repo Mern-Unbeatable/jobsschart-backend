@@ -395,8 +395,14 @@ class PaymentService {
     const metadata = paymentData?.metadata || {};
     const { userId, type } = metadata;
 
-    if (!this._isMolliePaid(paymentData)) {
-      log.info(`Mollie payment not paid yet: ${paymentData?.id} status=${paymentData?.status}`);
+    log.info(`📋 Session metadata: ${JSON.stringify(session.metadata)}`);
+
+    const existingPayment = await prisma.payment.findFirst({
+      where: { stripeSessionId: session.id, status: 'SUCCESS' },
+    });
+
+    if (existingPayment) {
+      log.info(`Already processed: ${session.id}`);
       return;
     }
 
@@ -510,22 +516,8 @@ class PaymentService {
     log.info(`Package "${pkg.name}": +${credits} credits → user ${userId}`);
   }
 
-  async _saveDonation(paymentData) {
-    const m = paymentData.metadata;
-    const payment = await this._getPaymentBySessionId(paymentData.id);
-    if (!payment) throw new NotFoundError(`Payment not found for payment ${paymentData.id}`);
-
-    if (payment.donationId) {
-      log.info(`Donation already linked for payment ${paymentData.id} -> ${payment.donationId}`);
-      return;
-    }
-
-    const donorId = payment.userId;
-    const donationAmount = parseInt(m.donationAmount, 10);
-
-    if (!m.donorType || !m.donorName || !m.donorPhone || !m.donorEmail || !m.benefit || !Number.isFinite(donationAmount)) {
-      throw new BadRequestError('Invalid donation metadata for this Stripe session');
-    }
+  async _saveDonation(session) {
+    const m = session.metadata;
 
     await prisma.$transaction(async (tx) => {
       const donationData = {
