@@ -8,14 +8,7 @@ let io;
 
 const billingTimers = new Map();
 
-// ─────────────────────────────────────────────────────────────
-// PRESENCE HELPERS
-// ─────────────────────────────────────────────────────────────
 
-/**
- * Sets consultant online/offline status in DB and broadcasts
- * to ALL connected clients so every card/profile updates live.
- */
 async function setConsultantStatus(userId, status) {
     try {
         const consultant = await prisma.consultant.findUnique({
@@ -220,7 +213,7 @@ export const initSocket = (httpServer) => {
                 room: `user_${userId}`,
             });
 
-    
+
             await setConsultantStatus(userId, 'ONLINE');
         });
 
@@ -232,7 +225,7 @@ export const initSocket = (httpServer) => {
         });
 
         // ── PRESENCE: Manual status change
- 
+
         socket.on('set_status', async ({ status }) => {
             if (!socket.userId) return;
             const allowed = ['ONLINE', 'OFFLINE', 'BUSY'];
@@ -244,7 +237,7 @@ export const initSocket = (httpServer) => {
         socket.on('disconnect', async () => {
             log.info(`Client disconnected: ${socket.id}`);
             if (socket.userId) {
-              
+
                 setTimeout(async () => {
                     const sockets = await io.in(`user_${socket.userId}`).fetchSockets();
                     if (sockets.length === 0) {
@@ -252,7 +245,7 @@ export const initSocket = (httpServer) => {
                     } else {
                         log.info(`User ${socket.userId} reconnected quickly, keeping ONLINE`);
                     }
-                }, 3000); 
+                }, 3000);
             }
         });
 

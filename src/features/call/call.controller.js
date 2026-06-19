@@ -21,6 +21,7 @@ class CallController {
         });
     });
 
+
     acceptCall = catchAsync(async (req, res) => {
         const { callId } = req.params;
 
@@ -72,7 +73,7 @@ class CallController {
             data: result,
         });
     });
-    
+
 
     cancelCall = catchAsync(async (req, res) => {
         const { callId } = req.params;
