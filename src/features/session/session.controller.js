@@ -45,6 +45,18 @@ class SessionController {
             data: { session },
         });
     });
+    getRecentClients = catchAsync(async (req, res) => {
+        console.log('req check', req.user)
+        const result = await sessionService.getRecentClients(
+            req.user.id,
+            req.query
+        );
+
+        ResponseHandler.success(res, {
+            message: 'Recent clients fetched successfully',
+            data: result,
+        });
+    });
 }
 
 export const sessionController = new SessionController();
