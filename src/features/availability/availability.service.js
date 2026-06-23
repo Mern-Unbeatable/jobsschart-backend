@@ -45,11 +45,64 @@ class AvailabilityService {
         });
     }
 
+    getTimeInMinutes(time) {
+        const [hours, minutes] = time.split(':').map(Number);
+        return (hours * 60) + minutes;
+    }
+
+    /**
+     * Check whether a requested datetime range fits a consultant weekly slot
+     * and has no overlap with existing active bookings.
+     */
+    async isTimeSlotAvailable(consultantId, startDateTime, durationMinutes, excludeBookingId = null) {
+        const requestedStart = new Date(startDateTime);
+        const requestedEnd = new Date(requestedStart.getTime() + (durationMinutes * 60 * 1000));
+
+        if (Number.isNaN(requestedStart.getTime()) || Number.isNaN(requestedEnd.getTime()) || durationMinutes <= 0) {
+            return false;
+        }
+
+        const consultant = await this.getConsultantById(consultantId);
+        if (!consultant) return false;
+
+        const dayOfWeek = requestedStart.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+        const requestedStartMinutes = (requestedStart.getHours() * 60) + requestedStart.getMinutes();
+        const requestedEndMinutes = (requestedEnd.getHours() * 60) + requestedEnd.getMinutes();
+
+        const slots = await prisma.availabilitySlot.findMany({
+            where: {
+                consultantId: consultant.id,
+                dayOfWeek,
+                isActive: true,
+            },
+        });
+
+        const isWithinAnySlot = slots.some((slot) => {
+            const slotStartMinutes = this.getTimeInMinutes(slot.startTime);
+            const slotEndMinutes = this.getTimeInMinutes(slot.endTime);
+            return requestedStartMinutes >= slotStartMinutes && requestedEndMinutes <= slotEndMinutes;
+        });
+
+        if (!isWithinAnySlot) return false;
+
+        const overlappingBooking = await prisma.schedule.findFirst({
+            where: {
+                consultantId: consultant.id,
+                status: { in: ['PENDING', 'CONFIRMED'] },
+                ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+                startTime: { lt: requestedEnd },
+                endTime: { gt: requestedStart },
+            },
+        });
+
+        return !overlappingBooking;
+    }
+
     // ==================== SLOT CRUD OPERATIONS ====================
 
     async createWeeklySlots(consultantId, slots) {
         const createdSlots = [];
-        
+
         for (const slot of slots) {
             const existingSlot = await prisma.availabilitySlot.findFirst({
                 where: {
@@ -78,13 +131,13 @@ class AvailabilityService {
                 });
             }
         }
-        
+
         return createdSlots;
     }
 
     async bulkCreateSlots(consultantUserId, slotsData) {
         const consultant = await this.getConsultantByUserId(consultantUserId);
-        
+
         if (!consultant) throw new Error('Consultant not found');
 
         const createdSlots = [];
@@ -114,7 +167,7 @@ class AvailabilityService {
 
     async getAvailabilitySlots(consultantId, options = {}) {
         let consultant;
-        
+
         const consultantById = await this.getConsultantById(consultantId);
         if (consultantById) {
             consultant = consultantById;
@@ -124,9 +177,9 @@ class AvailabilityService {
 
         if (!consultant) throw new Error('Consultant not found');
 
-        const where = { 
-            consultantId: consultant.id, 
-            isActive: true 
+        const where = {
+            consultantId: consultant.id,
+            isActive: true
         };
 
         const slots = await prisma.availabilitySlot.findMany({
@@ -152,11 +205,11 @@ class AvailabilityService {
         if (options.date) {
             const targetDate = new Date(options.date);
             const dayOfWeek = targetDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
-            
+
             const availableSlotsForDate = weeklySlots.filter(
                 slot => slot.dayOfWeek === dayOfWeek && slot.isActive
             );
-            
+
             return {
                 date: options.date,
                 dayOfWeek,
@@ -173,7 +226,7 @@ class AvailabilityService {
 
     async updateAvailabilitySlot(slotId, consultantUserId, data) {
         const consultant = await this.getConsultantByUserId(consultantUserId);
-        
+
         if (!consultant) throw new Error('Consultant not found');
 
         const slot = await prisma.availabilitySlot.findFirst({
@@ -183,7 +236,7 @@ class AvailabilityService {
         if (!slot) throw new Error('Availability slot not found');
 
         const updateData = {};
-        
+
         if (data.dayOfWeek !== undefined) updateData.dayOfWeek = data.dayOfWeek;
         if (data.startTime !== undefined) updateData.startTime = data.startTime;
         if (data.endTime !== undefined) updateData.endTime = data.endTime;
@@ -203,7 +256,7 @@ class AvailabilityService {
 
     async deleteAvailabilitySlot(slotId, consultantUserId) {
         const consultant = await this.getConsultantByUserId(consultantUserId);
-        
+
         if (!consultant) throw new Error('Consultant not found');
 
         const slot = await prisma.availabilitySlot.findFirst({

@@ -1,13 +1,85 @@
 // src/features/schedule/schedule.service.js (Updated - removed availability methods)
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
-import { availabilityService } from '../availability/availability.service.js';
 
 const log = new Logger('ScheduleService');
 
 class ScheduleService {
     constructor() {
         this.log = new Logger('ScheduleService');
+    }
+
+    getTimeInMinutes(time) {
+        const [hours, minutes] = time.split(':').map(Number);
+        return (hours * 60) + minutes;
+    }
+
+    async isTimeSlotAvailable(consultantId, startDateTime, durationMinutes, excludeBookingId = null) {
+        const requestedStart = new Date(startDateTime);
+        const requestedEnd = new Date(requestedStart.getTime() + (durationMinutes * 60 * 1000));
+
+        if (Number.isNaN(requestedStart.getTime()) || Number.isNaN(requestedEnd.getTime()) || durationMinutes <= 0) {
+            return false;
+        }
+
+        const dayOfWeek = requestedStart.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+        const requestedStartMinutes = (requestedStart.getHours() * 60) + requestedStart.getMinutes();
+        const requestedEndMinutes = (requestedEnd.getHours() * 60) + requestedEnd.getMinutes();
+
+        const slots = await prisma.availabilitySlot.findMany({
+            where: {
+                consultantId,
+                dayOfWeek,
+                isActive: true,
+            },
+        });
+
+        const isWithinAnySlot = slots.some((slot) => {
+            const slotStartMinutes = this.getTimeInMinutes(slot.startTime);
+            const slotEndMinutes = this.getTimeInMinutes(slot.endTime);
+            return requestedStartMinutes >= slotStartMinutes && requestedEndMinutes <= slotEndMinutes;
+        });
+
+        if (!isWithinAnySlot) {
+            return false;
+        }
+
+        const overlappingBooking = await prisma.schedule.findFirst({
+            where: {
+                consultantId,
+                status: { in: ['PENDING', 'CONFIRMED'] },
+                ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
+                startTime: { lt: requestedEnd },
+                endTime: { gt: requestedStart },
+            },
+        });
+
+        return !overlappingBooking;
+    }
+
+    buildSessionAccess(booking) {
+        const now = new Date();
+        const sessionOpensAt = new Date(booking.startTime.getTime() - (10 * 60 * 1000));
+        const canStartSession =
+            ['PENDING', 'CONFIRMED'].includes(booking.status) &&
+            now >= sessionOpensAt &&
+            now <= booking.endTime;
+
+        return {
+            canStartCall: canStartSession,
+            canStartChat: canStartSession,
+            sessionOpensAt,
+            sessionClosesAt: booking.endTime,
+        };
+    }
+
+    async getBookingById(bookingId) {
+        return prisma.schedule.findUnique({
+            where: { id: bookingId },
+            include: {
+                consultant: true,
+            },
+        });
     }
 
     async createBooking(userId, data) {
@@ -29,7 +101,7 @@ class ScheduleService {
         if (!consultant.isApproved) throw new Error('Consultant is not approved');
 
         // Use availability service to check if time slot is available
-        const isAvailable = await availabilityService.isTimeSlotAvailable(
+        const isAvailable = await this.isTimeSlotAvailable(
             consultantId,
             startDateTime,
             (endDateTime - startDateTime) / (1000 * 60)
@@ -183,78 +255,80 @@ class ScheduleService {
     }
 
     async updateBookingStatus(bookingId, userId, role, status) {
-        const booking = await prisma.schedule.findUnique({
-            where: { id: bookingId },
-            include: {
-                consultant: true,
-            },
-        });
+        const booking = await this.getBookingById(bookingId);
 
         if (!booking) throw new Error('Booking not found');
 
         const isOwner = booking.userId === userId;
         const isConsultant = booking.consultant.userId === userId;
-
-        if (role !== 'ADMIN' && !isOwner && !isConsultant) {
-            throw new Error('Unauthorized to update this booking');
-        }
+        const isAdmin = role === 'ADMIN';
+        const isManager = isConsultant || isAdmin;
 
         if (status === 'CONFIRMED') {
-            const isAvailable = await availabilityService.isTimeSlotAvailable(
+            if (!isManager) {
+                throw new Error('Only consultant or admin can confirm this booking');
+            }
+
+            if (booking.status !== 'PENDING') {
+                throw new Error('Only pending bookings can be confirmed');
+            }
+
+            const isAvailable = await this.isTimeSlotAvailable(
                 booking.consultantId,
                 booking.startTime,
-                (booking.endTime - booking.startTime) / (1000 * 60)
+                (booking.endTime - booking.startTime) / (1000 * 60),
+                bookingId
             );
 
             if (!isAvailable) throw new Error('Time slot is no longer available');
+
+            return this._updateBookingStatus(bookingId, status);
         }
 
         if (status === 'COMPLETED') {
-            return await prisma.$transaction(async (tx) => {
-                const updatedBooking = await tx.schedule.update({
-                    where: { id: bookingId },
-                    data: { status },
-                    include: {
-                        user: {
-                            select: {
-                                id: true,
-                                name: true,
-                                username: true,
-                                avatar: true,
-                                email: true,
-                                phone: true,
-                            },
-                        },
-                        consultant: {
-                            include: {
-                                user: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        username: true,
-                                        avatar: true,
-                                    },
-                                },
-                            },
-                        },
-                    },
-                });
+            if (!isManager) {
+                throw new Error('Only consultant or admin can complete this booking');
+            }
 
-                await tx.call.create({
-                    data: {
-                        userId: booking.userId,
-                        consultantId: booking.consultant.userId,
-                        status: 'COMPLETED',
-                        startTime: booking.startTime,
-                        endTime: booking.endTime,
-                        durationSeconds: Math.floor((booking.endTime - booking.startTime) / 1000),
-                    },
-                });
+            if (booking.status !== 'CONFIRMED') {
+                throw new Error('Only confirmed bookings can be completed');
+            }
 
-                return updatedBooking;
-            });
+            return this._updateBookingStatus(bookingId, status);
         }
 
+        if (status === 'CANCELLED') {
+            if (!(isOwner || isManager)) {
+                throw new Error('Unauthorized to cancel this booking');
+            }
+
+            if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED') {
+                throw new Error('Booking cannot be cancelled now');
+            }
+
+            return await this._updateBookingStatus(bookingId, status);
+        }
+
+        if (status === 'NO_SHOW') {
+            if (!isManager) {
+                throw new Error('Only consultant or admin can mark no show');
+            }
+
+            if (booking.status !== 'CONFIRMED') {
+                throw new Error('Only confirmed bookings can be marked no show');
+            }
+
+            return await this._updateBookingStatus(bookingId, status);
+        }
+
+        if (!isAdmin) {
+            throw new Error('Unauthorized to update this booking');
+        }
+
+        return this._updateBookingStatus(bookingId, status);
+    }
+
+    async _updateBookingStatus(bookingId, status) {
         return prisma.schedule.update({
             where: { id: bookingId },
             data: { status },
@@ -283,6 +357,18 @@ class ScheduleService {
                 },
             },
         });
+    }
+
+    async confirmBooking(bookingId, userId, role) {
+        return this.updateBookingStatus(bookingId, userId, role, 'CONFIRMED');
+    }
+
+    async completeBooking(bookingId, userId, role) {
+        return this.updateBookingStatus(bookingId, userId, role, 'COMPLETED');
+    }
+
+    async cancelBookingByConsultant(bookingId, userId, role) {
+        return this.updateBookingStatus(bookingId, userId, role, 'CANCELLED');
     }
 
     async cancelBooking(bookingId, userId, role) {
@@ -388,7 +474,7 @@ class ScheduleService {
 
         if (!consultant) throw new Error('Consultant not found');
 
-        return prisma.schedule.findMany({
+        const bookings = await prisma.schedule.findMany({
             where: {
                 consultantId: consultant.id,
                 startTime: { gte: new Date() },
@@ -409,6 +495,46 @@ class ScheduleService {
             orderBy: { startTime: 'asc' },
             take: limit,
         });
+
+        return bookings.map((booking) => ({
+            ...booking,
+            sessionAccess: this.buildSessionAccess(booking),
+        }));
+    }
+
+    async getUserUpcomingBookings(userId, limit = 10) {
+        const bookings = await prisma.schedule.findMany({
+            where: {
+                userId,
+                startTime: { gte: new Date() },
+                status: { in: ['PENDING', 'CONFIRMED'] },
+            },
+            include: {
+                consultant: {
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                name: true,
+                                username: true,
+                                avatar: true,
+                                bio: true,
+                                email: true,
+                                phone: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: { startTime: 'asc' },
+            take: limit,
+        });
+
+        return bookings.map((booking) => ({
+            ...booking,
+            consultantUserId: booking.consultant?.userId || null,
+            sessionAccess: this.buildSessionAccess(booking),
+        }));
     }
 }
 

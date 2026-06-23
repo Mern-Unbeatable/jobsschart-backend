@@ -35,6 +35,17 @@ class ScheduleController {
         });
     });
 
+    getMyUpcomingBookings = catchAsync(async (req, res) => {
+        const userId = req.user.id;
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const bookings = await scheduleService.getUserUpcomingBookings(userId, limit);
+
+        ResponseHandler.success(res, {
+            message: 'Your upcoming bookings fetched successfully',
+            data: { bookings },
+        });
+    });
+
     getConsultantBookings = catchAsync(async (req, res) => {
         const consultantId = req.user.id;
         const result = await scheduleService.getConsultantBookings(consultantId, req.query);
@@ -42,6 +53,17 @@ class ScheduleController {
         ResponseHandler.success(res, {
             message: 'Consultant bookings fetched successfully',
             data: result,
+        });
+    });
+
+    getConsultantUpcomingBookings = catchAsync(async (req, res) => {
+        const consultantId = req.user.id;
+        const limit = parseInt(req.query.limit, 10) || 10;
+        const bookings = await scheduleService.getUpcomingBookings(consultantId, limit);
+
+        ResponseHandler.success(res, {
+            message: 'Consultant upcoming bookings fetched successfully',
+            data: { bookings },
         });
     });
 
@@ -55,6 +77,45 @@ class ScheduleController {
 
         ResponseHandler.updated(res, {
             message: `Booking ${status.toLowerCase()} successfully`,
+            data: { booking },
+        });
+    });
+
+    confirmBooking = catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const booking = await scheduleService.confirmBooking(id, userId, role);
+
+        ResponseHandler.updated(res, {
+            message: 'Booking confirmed successfully',
+            data: { booking },
+        });
+    });
+
+    completeBooking = catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const booking = await scheduleService.completeBooking(id, userId, role);
+
+        ResponseHandler.updated(res, {
+            message: 'Booking completed successfully',
+            data: { booking },
+        });
+    });
+
+    cancelConsultantBooking = catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const userId = req.user.id;
+        const role = req.user.role;
+
+        const booking = await scheduleService.cancelBookingByConsultant(id, userId, role);
+
+        ResponseHandler.updated(res, {
+            message: 'Booking cancelled successfully',
             data: { booking },
         });
     });
