@@ -6,6 +6,46 @@ class TwilioVideoService {
         this.localTracks = [];
         this.isMuted = false;
         this.isVideoOff = false;
+        this._audioContainer = null;
+        this._participantListeners = new Map();
+    }
+
+    _getAudioContainer() {
+        if (!this._audioContainer) {
+            let container = document.getElementById('twilio-audio-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'twilio-audio-container';
+                container.style.cssText =
+                    'position:fixed;width:0;height:0;opacity:0;pointer-events:none;overflow:hidden;';
+                document.body.appendChild(container);
+            }
+            this._audioContainer = container;
+        }
+        return this._audioContainer;
+    }
+
+    _cleanupBeforeConnect() {
+        this._participantListeners.forEach((listeners, participant) => {
+            listeners.forEach(({ event, fn }) => {
+                try { participant.off(event, fn); } catch (_) { }
+            });
+        });
+        this._participantListeners.clear();
+
+        this.localTracks.forEach(track => {
+            try { track.stop(); track.detach().forEach(el => el.remove()); } catch (_) { }
+        });
+        this.localTracks = [];
+
+        if (this.room) {
+            try { this.room.removeAllListeners(); this.room.disconnect(); } catch (_) { }
+            this.room = null;
+        }
+
+        if (this._audioContainer) {
+            this._audioContainer.innerHTML = '';
+        }
     }
 
     async _getLocalTracks(callType) {
@@ -27,28 +67,81 @@ class TwilioVideoService {
         return tracks;
     }
 
-    _attachParticipant(participant, remoteVideoRef) {
-        participant.tracks.forEach(publication => {
-            if (publication.isSubscribed && publication.track) {
-                const el = publication.track.attach();
-                if (remoteVideoRef) remoteVideoRef.appendChild(el);
-            }
-        });
-        participant.on('trackSubscribed', track => {
+    _attachTrack(track, remoteVideoRef) {
+        if (track.kind === 'audio') {
+            const audioContainer = this._getAudioContainer();
             const el = track.attach();
-            if (remoteVideoRef) remoteVideoRef.appendChild(el);
+            el.autoplay = true;
+            el.playsInline = true;
+            el.muted = false;
+            el.volume = 1;
+            audioContainer.appendChild(el);
+
+            const tryPlay = () => {
+                const p = el.play();
+                if (p) p.catch(() => setTimeout(() => el.play().catch(() => { }), 500));
+            };
+            tryPlay();
+
+            const unlock = () => {
+                tryPlay();
+                document.removeEventListener('click', unlock);
+                document.removeEventListener('touchstart', unlock);
+            };
+            document.addEventListener('click', unlock);
+            document.addEventListener('touchstart', unlock);
+        } else if (track.kind === 'video') {
+            if (!remoteVideoRef) return;
+            const el = track.attach();
+            el.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+            remoteVideoRef.appendChild(el);
+        }
+    }
+
+    _attachParticipant(participant, remoteVideoRef) {
+        const listeners = [];
+
+        const subscribeToPublication = (publication) => {
+            if (publication.isSubscribed && publication.track) {
+                this._attachTrack(publication.track, remoteVideoRef);
+            } else {
+                publication.subscribe().catch(err => {
+                    console.warn('subscribe() failed:', err.message);
+                });
+            }
+        };
+
+        participant.tracks.forEach(publication => {
+            subscribeToPublication(publication);
         });
-        participant.on('trackUnsubscribed', track => {
+
+        const onTrackPublished = publication => {
+            subscribeToPublication(publication);
+        };
+        participant.on('trackPublished', onTrackPublished);
+        listeners.push({ event: 'trackPublished', fn: onTrackPublished });
+
+        const onTrackSubscribed = track => {
+            this._attachTrack(track, remoteVideoRef);
+        };
+        participant.on('trackSubscribed', onTrackSubscribed);
+        listeners.push({ event: 'trackSubscribed', fn: onTrackSubscribed });
+
+        const onTrackUnsubscribed = track => {
             track.detach().forEach(el => el.remove());
-        });
+        };
+        participant.on('trackUnsubscribed', onTrackUnsubscribed);
+        listeners.push({ event: 'trackUnsubscribed', fn: onTrackUnsubscribed });
+
+        this._participantListeners.set(participant, listeners);
     }
 
     async connectVideo(token, roomName, localVideoRef, remoteVideoRef) {
-        // Get local tracks gracefully — never throws even if no devices
+        this._cleanupBeforeConnect();
+
         const localTracks = await this._getLocalTracks('VIDEO');
         this.localTracks = localTracks;
 
-        // ✅ Connect with tracks array (not audio:true/video:true which throws)
         this.room = await connectTwilioVideo(token, {
             name: roomName,
             tracks: localTracks,
@@ -56,25 +149,20 @@ class TwilioVideoService {
 
         console.log('✅ Connected to video room:', this.room.name);
 
-        // Attach local video to PiP
         localTracks.forEach(track => {
             if (track.kind === 'video' && localVideoRef) {
                 const el = track.attach();
-                el.style.width = '100%';
-                el.style.height = '100%';
-                el.style.objectFit = 'cover';
+                el.style.cssText = 'width:100%;height:100%;object-fit:cover;';
                 localVideoRef.innerHTML = '';
                 localVideoRef.appendChild(el);
             }
         });
 
-        // Attach already-connected remote participants
         this.room.participants.forEach(participant => {
             this._attachParticipant(participant, remoteVideoRef);
         });
 
         this.room.on('participantConnected', participant => {
-            if (remoteVideoRef) remoteVideoRef.innerHTML = '';
             this._attachParticipant(participant, remoteVideoRef);
         });
 
@@ -84,10 +172,10 @@ class TwilioVideoService {
                     publication.track.detach().forEach(el => el.remove());
                 }
             });
+            this._participantListeners.delete(participant);
         });
 
-        this.room.on('disconnected', (room, error) => {
-            console.log('🔌 Disconnected from room', error?.message);
+        this.room.on('disconnected', () => {
             this.cleanup();
         });
 
@@ -95,7 +183,9 @@ class TwilioVideoService {
     }
 
     async connectAudio(token, roomName, onConnect, onDisconnect) {
-        const localTracks = await this._getLocalTracks('PHONE');
+        this._cleanupBeforeConnect();
+
+        const localTracks = await this._getLocalTracks('AUDIO');
         this.localTracks = localTracks;
 
         this.room = await connectTwilioVideo(token, {
@@ -105,13 +195,32 @@ class TwilioVideoService {
 
         console.log('✅ Connected to audio room:', this.room.name);
 
-        this.room.participants.forEach(() => onConnect?.());
-        this.room.on('participantConnected', () => onConnect?.());
-        this.room.on('participantDisconnected', () => onDisconnect?.());
+        this.room.participants.forEach(participant => {
+            this._attachParticipant(participant, null);
+        });
+
+        this.room.on('participantConnected', participant => {
+            this._attachParticipant(participant, null);
+            onConnect?.();
+        });
+
+        this.room.on('participantDisconnected', participant => {
+            participant.tracks.forEach(publication => {
+                if (publication.track) {
+                    publication.track.detach().forEach(el => el.remove());
+                }
+            });
+            onDisconnect?.();
+        });
+
         this.room.on('disconnected', () => {
             this.cleanup();
             onDisconnect?.();
         });
+
+        if (this.room.participants.size > 0) {
+            setTimeout(() => onConnect?.(), 200);
+        }
 
         return this.room;
     }
@@ -125,24 +234,46 @@ class TwilioVideoService {
         this.isMuted = false;
     }
     disableVideo() {
-        this.localTracks.forEach(t => { if (t.kind === 'video') t.disable(); });
+        if (this.room) {
+            this.room.localParticipant.videoTracks.forEach(publication => {
+                if (publication.track) publication.track.disable();
+            });
+        }
         this.isVideoOff = true;
     }
     enableVideo() {
-        this.localTracks.forEach(t => { if (t.kind === 'video') t.enable(); });
+        if (this.room) {
+            this.room.localParticipant.videoTracks.forEach(publication => {
+                if (publication.track) publication.track.enable();
+            });
+        }
         this.isVideoOff = false;
     }
 
     cleanup() {
+        this._participantListeners.forEach((listeners, participant) => {
+            listeners.forEach(({ event, fn }) => {
+                try { participant.off(event, fn); } catch (_) { }
+            });
+        });
+        this._participantListeners.clear();
+
         this.localTracks.forEach(track => {
-            track.stop();
-            track.detach().forEach(el => el.remove());
+            try { track.stop(); track.detach().forEach(el => el.remove()); } catch (_) { }
         });
         this.localTracks = [];
+
         if (this.room) {
-            this.room.disconnect();
+            try { this.room.removeAllListeners(); this.room.disconnect(); } catch (_) { }
             this.room = null;
         }
+
+        if (this._audioContainer) {
+            this._audioContainer.innerHTML = '';
+        }
+
+        this.isMuted = false;
+        this.isVideoOff = false;
     }
 
     disconnect() {
