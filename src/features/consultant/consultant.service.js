@@ -177,6 +177,7 @@ class ConsultantService {
                     earnings: true,
                     payouts: true,
                     schedules: true,
+                    availabilitySlots: true,
                 },
                 orderBy: { [sortField]: sortOrder },
                 skip,
@@ -233,6 +234,7 @@ class ConsultantService {
                 earnings: true,
                 payouts: true,
                 schedules: true,
+                availabilitySlots: true,
             },
         });
 
@@ -248,128 +250,121 @@ class ConsultantService {
         };
     }
 
-    // ==================== COMPLETE EARNINGS DASHBOARD ====================
 
-  
+    async getEarningsDashboard(userId) {
+        // Get consultant by userId
+        const consultant = await prisma.consultant.findUnique({
+            where: { userId },
+            select: { id: true },
+        });
 
-    // NEW: Get complete earnings dashboard data
-// src/features/consultant/consultant.service.js
+        if (!consultant) throw new Error('Consultant not found');
 
-// FIXED: Corrected getEarningsDashboard method
-async getEarningsDashboard(userId) {
-    // Get consultant by userId
-    const consultant = await prisma.consultant.findUnique({
-        where: { userId },
-        select: { id: true },
-    });
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-    if (!consultant) throw new Error('Consultant not found');
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
-    
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const startOfYear = new Date(today.getFullYear(), 0, 1);
+        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        const startOfYear = new Date(today.getFullYear(), 0, 1);
 
-    // Get wallet balance from User model (wallet is related to User, not Consultant)
-    const user = await prisma.user.findUnique({
-        where: { id: userId },
-        include: {
-            wallet: {
-                select: {
-                    creditBalance: true,
+        // Get wallet balance from User model (wallet is related to User, not Consultant)
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            include: {
+                wallet: {
+                    select: {
+                        creditBalance: true,
+                    },
                 },
             },
-        },
-    });
-
-    // Get all earnings for calculations
-    const allEarnings = await prisma.consultantEarning.findMany({
-        where: { consultantId: consultant.id },
-        select: {
-            consultantShare: true,
-            createdAt: true,
-            isPaidOut: true,
-        },
-    });
-
-    // Calculate today's income
-    const todayIncome = allEarnings
-        .filter(e => new Date(e.createdAt) >= today)
-        .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-
-    // Calculate total revenue (all time)
-    const totalRevenue = allEarnings.reduce((sum, e) => sum + Number(e.consultantShare), 0);
-
-    // Calculate withdrawable amount (earned but not paid out)
-    const withdrawableAmount = allEarnings
-        .filter(e => !e.isPaidOut)
-        .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-
-    // Available balance (from wallet)
-    const availableBalance = user?.wallet?.creditBalance || 0;
-
-    // Calculate this week's income
-    const weekIncome = allEarnings
-        .filter(e => new Date(e.createdAt) >= startOfWeek)
-        .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-
-    // Calculate this month's income
-    const monthIncome = allEarnings
-        .filter(e => new Date(e.createdAt) >= startOfMonth)
-        .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-
-    // Calculate monthly earnings for chart (last 12 months)
-    const monthlyEarnings = [];
-    for (let i = 11; i >= 0; i--) {
-        const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
-        const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-        const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-        
-        const monthEarnings = allEarnings
-            .filter(e => {
-                const earningDate = new Date(e.createdAt);
-                return earningDate >= monthStart && earningDate <= monthEnd;
-            })
-            .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-        
-        monthlyEarnings.push({
-            month: monthDate.toLocaleString('default', { month: 'short' }),
-            year: monthDate.getFullYear(),
-            earnings: Number(monthEarnings.toFixed(2)),
         });
-    }
 
-    // Calculate today's scheduled sessions count
-    const todaySessions = await prisma.schedule.count({
-        where: {
-            consultantId: consultant.id,
-            bookingDate: {
-                gte: today,
-                lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+        // Get all earnings for calculations
+        const allEarnings = await prisma.consultantEarning.findMany({
+            where: { consultantId: consultant.id },
+            select: {
+                consultantShare: true,
+                createdAt: true,
+                isPaidOut: true,
             },
-            status: { in: ['CONFIRMED', 'PENDING'] },
-        },
-    });
+        });
 
-    return {
-        dashboard: {
-            todayIncome: Number(todayIncome.toFixed(2)),
-            totalRevenue: Number(totalRevenue.toFixed(2)),
-            withdrawableAmount: Number(withdrawableAmount.toFixed(2)),
-            availableBalance: Number(availableBalance.toFixed(2)),
-            weekIncome: Number(weekIncome.toFixed(2)),
-            monthIncome: Number(monthIncome.toFixed(2)),
-            todaySessions,
-        },
-        chart: {
-            monthlyEarnings,
-        },
-    };
-}
+        // Calculate today's income
+        const todayIncome = allEarnings
+            .filter(e => new Date(e.createdAt) >= today)
+            .reduce((sum, e) => sum + Number(e.consultantShare), 0);
+
+        // Calculate total revenue (all time)
+        const totalRevenue = allEarnings.reduce((sum, e) => sum + Number(e.consultantShare), 0);
+
+        // Calculate withdrawable amount (earned but not paid out)
+        const withdrawableAmount = allEarnings
+            .filter(e => !e.isPaidOut)
+            .reduce((sum, e) => sum + Number(e.consultantShare), 0);
+
+        // Available balance (from wallet)
+        const availableBalance = user?.wallet?.creditBalance || 0;
+
+        // Calculate this week's income
+        const weekIncome = allEarnings
+            .filter(e => new Date(e.createdAt) >= startOfWeek)
+            .reduce((sum, e) => sum + Number(e.consultantShare), 0);
+
+        // Calculate this month's income
+        const monthIncome = allEarnings
+            .filter(e => new Date(e.createdAt) >= startOfMonth)
+            .reduce((sum, e) => sum + Number(e.consultantShare), 0);
+
+        // Calculate monthly earnings for chart (last 12 months)
+        const monthlyEarnings = [];
+        for (let i = 11; i >= 0; i--) {
+            const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+            const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
+
+            const monthEarnings = allEarnings
+                .filter(e => {
+                    const earningDate = new Date(e.createdAt);
+                    return earningDate >= monthStart && earningDate <= monthEnd;
+                })
+                .reduce((sum, e) => sum + Number(e.consultantShare), 0);
+
+            monthlyEarnings.push({
+                month: monthDate.toLocaleString('default', { month: 'short' }),
+                year: monthDate.getFullYear(),
+                earnings: Number(monthEarnings.toFixed(2)),
+            });
+        }
+
+        // Calculate today's scheduled sessions count
+        const todaySessions = await prisma.schedule.count({
+            where: {
+                consultantId: consultant.id,
+                bookingDate: {
+                    gte: today,
+                    lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+                },
+                status: { in: ['CONFIRMED', 'PENDING'] },
+            },
+        });
+
+        return {
+            dashboard: {
+                todayIncome: Number(todayIncome.toFixed(2)),
+                totalRevenue: Number(totalRevenue.toFixed(2)),
+                withdrawableAmount: Number(withdrawableAmount.toFixed(2)),
+                availableBalance: Number(availableBalance.toFixed(2)),
+                weekIncome: Number(weekIncome.toFixed(2)),
+                monthIncome: Number(monthIncome.toFixed(2)),
+                todaySessions,
+            },
+            chart: {
+                monthlyEarnings,
+            },
+        };
+    }
 
     // NEW: Get earnings over time for chart data
     async getEarningsOverTime(userId, period = 'monthly') {
@@ -390,7 +385,7 @@ async getEarningsDashboard(userId) {
         });
 
         const today = new Date();
-        
+
         if (period === 'weekly') {
             // Last 12 weeks
             const weeklyEarnings = [];
@@ -398,18 +393,18 @@ async getEarningsDashboard(userId) {
                 const weekStart = new Date(today);
                 weekStart.setDate(today.getDate() - (today.getDay() + 7 * i));
                 weekStart.setHours(0, 0, 0, 0);
-                
+
                 const weekEnd = new Date(weekStart);
                 weekEnd.setDate(weekStart.getDate() + 6);
                 weekEnd.setHours(23, 59, 59, 999);
-                
+
                 const weekEarnings = allEarnings
                     .filter(e => {
                         const earningDate = new Date(e.createdAt);
                         return earningDate >= weekStart && earningDate <= weekEnd;
                     })
                     .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-                
+
                 weeklyEarnings.push({
                     week: `Week ${i + 1}`,
                     startDate: weekStart.toISOString().split('T')[0],
@@ -425,14 +420,14 @@ async getEarningsDashboard(userId) {
                 const monthDate = new Date(today.getFullYear(), today.getMonth() - i, 1);
                 const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
                 const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0);
-                
+
                 const monthEarnings = allEarnings
                     .filter(e => {
                         const earningDate = new Date(e.createdAt);
                         return earningDate >= monthStart && earningDate <= monthEnd;
                     })
                     .reduce((sum, e) => sum + Number(e.consultantShare), 0);
-                
+
                 monthlyEarnings.push({
                     month: monthDate.toLocaleString('default', { month: 'short' }),
                     year: monthDate.getFullYear(),
