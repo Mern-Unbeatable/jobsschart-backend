@@ -17,9 +17,6 @@ CREATE TYPE "CallStatus" AS ENUM ('PENDING', 'ACTIVE', 'COMPLETED', 'FAILED', 'C
 CREATE TYPE "TransactionType" AS ENUM ('PURCHASE', 'CALL_DEDUCTION', 'REFUND', 'BONUS', 'ADJUSTMENT');
 
 -- CreateEnum
-CREATE TYPE "PayoutStatus" AS ENUM ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED');
-
--- CreateEnum
 CREATE TYPE "TopicStatus" AS ENUM ('OPEN', 'CLOSED', 'PINNED');
 
 -- CreateEnum
@@ -94,6 +91,12 @@ CREATE TYPE "SessionSourceType" AS ENUM ('PHONE', 'VIDEO', 'CHAT');
 -- CreateEnum
 CREATE TYPE "SessionStatus" AS ENUM ('COMPLETED', 'ACTIVE', 'CANCELLED');
 
+-- CreateEnum
+CREATE TYPE "PayoutStatus" AS ENUM ('PENDING', 'APPROVED', 'PROCESSING', 'COMPLETED', 'FAILED', 'REJECTED');
+
+-- CreateEnum
+CREATE TYPE "PayoutMethod" AS ENUM ('BANK');
+
 -- CreateTable
 CREATE TABLE "users" (
     "id" TEXT NOT NULL,
@@ -138,6 +141,8 @@ CREATE TABLE "consultants" (
     "stripeAccountId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "category" TEXT,
+    "topics" TEXT,
 
     CONSTRAINT "consultants_pkey" PRIMARY KEY ("id")
 );
@@ -302,7 +307,7 @@ CREATE TABLE "products" (
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-    "productCategoryId" TEXT,
+    "productCategory" TEXT NOT NULL,
 
     CONSTRAINT "products_pkey" PRIMARY KEY ("id")
 );
@@ -325,6 +330,7 @@ CREATE TABLE "orders" (
     "status" "OrderStatus" NOT NULL DEFAULT 'PENDING',
     "shippingAddress" JSONB,
     "phone" TEXT,
+    "deliveryFee" DOUBLE PRECISION NOT NULL,
     "paymentStatus" "PaymentStatus" NOT NULL DEFAULT 'PENDING',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -408,20 +414,6 @@ CREATE TABLE "consultant_earnings" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "consultant_earnings_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "payouts" (
-    "id" TEXT NOT NULL,
-    "consultantId" TEXT NOT NULL,
-    "amount" DECIMAL(10,2) NOT NULL,
-    "status" "PayoutStatus" NOT NULL DEFAULT 'PENDING',
-    "stripePayoutId" TEXT,
-    "payoutDate" TIMESTAMP(3),
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "payouts_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -726,6 +718,51 @@ CREATE TABLE "sessions" (
     CONSTRAINT "sessions_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "payouts" (
+    "id" TEXT NOT NULL,
+    "consultantId" TEXT NOT NULL,
+    "amount" DECIMAL(10,2) NOT NULL,
+    "netAmount" DECIMAL(10,2),
+    "platformFee" DECIMAL(10,2),
+    "status" "PayoutStatus" NOT NULL DEFAULT 'PENDING',
+    "method" "PayoutMethod" NOT NULL DEFAULT 'BANK',
+    "organisationName" TEXT,
+    "routingNumber" TEXT,
+    "accountNumber" TEXT,
+    "reviewedBy" TEXT,
+    "reviewedAt" TIMESTAMP(3),
+    "rejectReason" TEXT,
+    "adminNote" TEXT,
+    "requestedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processedAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "payouts_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "categories" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "categories_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "topics" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "topics_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
 
@@ -864,6 +901,12 @@ CREATE INDEX "sessions_status_idx" ON "sessions"("status");
 -- CreateIndex
 CREATE INDEX "sessions_createdAt_idx" ON "sessions"("createdAt");
 
+-- CreateIndex
+CREATE INDEX "payouts_consultantId_idx" ON "payouts"("consultantId");
+
+-- CreateIndex
+CREATE INDEX "payouts_status_idx" ON "payouts"("status");
+
 -- AddForeignKey
 ALTER TABLE "consultants" ADD CONSTRAINT "consultants_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -907,9 +950,6 @@ ALTER TABLE "ad_campaigns" ADD CONSTRAINT "ad_campaigns_donorId_fkey" FOREIGN KE
 ALTER TABLE "ad_campaigns" ADD CONSTRAINT "ad_campaigns_donationId_fkey" FOREIGN KEY ("donationId") REFERENCES "donations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "products" ADD CONSTRAINT "products_productCategoryId_fkey" FOREIGN KEY ("productCategoryId") REFERENCES "ProductCategory"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "orders" ADD CONSTRAINT "orders_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -947,9 +987,6 @@ ALTER TABLE "consultant_earnings" ADD CONSTRAINT "consultant_earnings_consultant
 
 -- AddForeignKey
 ALTER TABLE "consultant_earnings" ADD CONSTRAINT "consultant_earnings_payoutId_fkey" FOREIGN KEY ("payoutId") REFERENCES "payouts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "payouts" ADD CONSTRAINT "payouts_consultantId_fkey" FOREIGN KEY ("consultantId") REFERENCES "consultants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "call_files" ADD CONSTRAINT "call_files_callId_fkey" FOREIGN KEY ("callId") REFERENCES "calls"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1040,3 +1077,6 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_userId_fkey" FOREIGN KEY ("userI
 
 -- AddForeignKey
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_consultantUserId_fkey" FOREIGN KEY ("consultantUserId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "payouts" ADD CONSTRAINT "payouts_consultantId_fkey" FOREIGN KEY ("consultantId") REFERENCES "consultants"("id") ON DELETE CASCADE ON UPDATE CASCADE;

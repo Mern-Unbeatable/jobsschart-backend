@@ -56,13 +56,14 @@ export class Server {
       helmet({
         crossOriginResourcePolicy: { policy: 'cross-origin' },
         crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
-        contentSecurityPolicy: false, // Disable CSP for development
+        contentSecurityPolicy: false,
       }),
     );
 
     const allowedOrigins = [
       'http://localhost:5173',
-      'https://jobsschart.maktechgroup.tech'
+      'https://illorac.com',
+      "https://illorac.nl",
     ];
 
     app.use(
@@ -254,25 +255,6 @@ export class Server {
       process.exit(1);
     }
   }
-
-  // startHttpServer(httpServer) {
-  //   this.log.info(`Worker started (PID: ${process.pid})`);
-  //   httpServer.listen(config.PORT, () => {
-  //     this.log.info(`Server running on port ${config.PORT}`);
-  //     this.log.info(`Environment: ${config.NODE_ENV}`);
-  //     this.log.info(`Static files available at: http://localhost:${config.PORT}/uploads`);
-  //     this.log.info(`Backend URL: ${config.BACKEND_URL || `http://localhost:${config.PORT}`}`);
-  //   });
-  //   httpServer.on('error', (error) => {
-  //     this.log.error('HTTP server error', error);
-  //     if (error.code === 'EADDRINUSE') {
-  //       this.log.error(`Port ${config.PORT} is already in use`);
-  //       process.exit(1);
-  //     }
-  //   });
-  // }
-
-  // In startHttpServer method, modify:
 
 
   startHttpServer(httpServer) {
