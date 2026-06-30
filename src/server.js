@@ -46,6 +46,31 @@ export class Server {
     this.globalErrorHandler(this.app);
     this.isConfigured = true;
   }
+  geoRedirectMiddleware(app) {
+
+    app.use((req, res, next) => {
+
+      if (config.NODE_ENV !== "production") {
+        return next();
+      }
+
+      const country = req.headers["cf-ipcountry"];
+
+      const host = req.hostname;
+
+      if (country === "NL" && host === "illorac.com") {
+        return res.redirect(302, "https://illorac.nl");
+      }
+
+      if (country !== "NL" && host === "illorac.nl") {
+        return res.redirect(302, "https://illorac.com");
+      }
+
+      next();
+
+    });
+
+  }
 
   securityMiddleware(app) {
     app.set('trust proxy', 1);
