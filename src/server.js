@@ -87,8 +87,8 @@ export class Server {
 
     const allowedOrigins = [
       'http://localhost:5173',
-      'https://illorac.com',
-      "https://illorac.nl",
+      "https://illorac.com",
+      "https://illorac.nl"
     ];
 
     app.use(
