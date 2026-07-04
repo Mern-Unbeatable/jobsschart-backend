@@ -38,6 +38,7 @@ export class Server {
   configure() {
     if (this.isConfigured) return;
     this.securityMiddleware(this.app);
+    this.geoRedirectMiddleware(this.app);
     this.webhookRawBody(this.app);
     this.standardMiddleware(this.app);
     this.staticFileMiddleware(this.app);
@@ -47,29 +48,42 @@ export class Server {
     this.isConfigured = true;
   }
   geoRedirectMiddleware(app) {
-
     app.use((req, res, next) => {
-
-      if (config.NODE_ENV !== "production") {
+      if (config.NODE_ENV !== 'production') {
         return next();
       }
 
-      const country = req.headers["cf-ipcountry"];
-
-      const host = req.hostname;
-
-      if (country === "NL" && host === "illorac.com") {
-        return res.redirect(302, "https://illorac.nl");
+      // Redirect only for browser navigation requests.
+      if (!['GET', 'HEAD'].includes(req.method)) {
+        return next();
       }
 
-      if (country !== "NL" && host === "illorac.nl") {
-        return res.redirect(302, "https://illorac.com");
+      // Skip API and static paths to avoid affecting integrations and assets.
+      if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
+        return next();
+      }
+
+      const country = String(req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || '')
+        .toUpperCase();
+
+      const host = String(req.hostname || '')
+        .toLowerCase()
+        .replace(/^www\./, '');
+
+      const supportedHosts = ['illorac.com', 'illorac.nl'];
+      if (!supportedHosts.includes(host)) {
+        return next();
+      }
+
+      const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
+
+      if (host !== targetDomain) {
+        const targetUrl = `https://${targetDomain}${req.originalUrl || ''}`;
+        return res.redirect(302, targetUrl);
       }
 
       next();
-
     });
-
   }
 
   securityMiddleware(app) {
