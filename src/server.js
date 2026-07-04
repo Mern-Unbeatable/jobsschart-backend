@@ -49,34 +49,51 @@ export class Server {
   }
   geoRedirectMiddleware(app) {
     app.use((req, res, next) => {
+      // Skip in non-production environments
       if (config.NODE_ENV !== 'production') {
         return next();
       }
 
-      // Redirect only for browser navigation requests.
+      // Redirect only for browser navigation requests (GET, HEAD)
       if (!['GET', 'HEAD'].includes(req.method)) {
         return next();
       }
 
-      // Skip API and static paths to avoid affecting integrations and assets.
+      // Skip API and static paths
       if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
         return next();
       }
 
-      const country = String(req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] || '')
-        .toUpperCase();
+      //  Define supported hosts FIRST
+      const supportedHosts = ['illorac.com', 'illorac.nl'];
 
       const host = String(req.hostname || '')
         .toLowerCase()
         .replace(/^www\./, '');
 
-      const supportedHosts = ['illorac.com', 'illorac.nl'];
+      // Only redirect if request is coming to one of our supported domains
       if (!supportedHosts.includes(host)) {
         return next();
       }
 
+      // Get country from headers (Cloudflare or Vercel)
+      const country = String(
+        req.headers['cf-ipcountry'] ||
+        req.headers['x-vercel-ip-country'] ||
+        ''
+      ).toUpperCase();
+
+      //  Log for debugging (remove in production later)
+      console.log('Geo Redirect Debug:', {
+        host,
+        country: country || 'UNKNOWN',
+        targetDomain: country === 'NL' ? 'illorac.nl' : 'illorac.com'
+      });
+
+      // Determine target domain based on country
       const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
 
+      // If not on the correct domain, redirect
       if (host !== targetDomain) {
         const targetUrl = `https://${targetDomain}${req.originalUrl || ''}`;
         return res.redirect(302, targetUrl);
