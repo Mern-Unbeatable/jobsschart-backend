@@ -24,6 +24,10 @@ import { initSocket } from './socket/index.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const GEO_COOKIE_NAME = 'country_code';
+const GEO_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000;
+const GEO_SUPPORTED_HOSTS = ['illorac.com', 'illorac.nl'];
+
 export class Server {
   constructor(app) {
     this.app = app;
@@ -72,71 +76,40 @@ export class Server {
         return next();
       }
 
-      const supportedHosts = ['illorac.com', 'illorac.nl'];
-
       const host = String(req.hostname || '')
         .toLowerCase()
         .replace(/^www\./, '');
 
       // Only redirect if request is coming to one of our supported domains
-      if (!supportedHosts.includes(host)) {
+      if (!GEO_SUPPORTED_HOSTS.includes(host)) {
         return next();
       }
 
-      // ✅ Now req.cookies will work because cookieParser is loaded first
-      let country = req.cookies?.country_code || null;
+      let country = this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME]);
+      let clientIp = this.getClientIpFromRequest(req);
+
+      if (!country && clientIp) {
+        country = await this.fetchCountryCodeFromIpApi(clientIp);
+
+        if (country) {
+          const requestIsSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+          res.cookie(GEO_COOKIE_NAME, country, {
+            maxAge: GEO_COOKIE_MAX_AGE,
+            httpOnly: false,
+            secure: requestIsSecure,
+            sameSite: 'Lax',
+          });
+        }
+      }
 
       if (!country) {
-        // Get client IP (considering proxy/trust proxy setting)
-        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-          req.socket?.remoteAddress ||
-          req.ip ||
-          '127.0.0.1';
-
-        // Skip localhost/private IPs
-        if (
-          clientIp === '127.0.0.1' ||
-          clientIp === '::1' ||
-          clientIp.startsWith('192.168.') ||
-          clientIp.startsWith('10.')
-        ) {
-          return next();
-        }
-
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-          const response = await fetch(`https://ipapi.co/${clientIp}/json/`, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'illorac-geo-redirect/1.0'
-            }
-          });
-
-          clearTimeout(timeoutId);
-
-          if (response.ok) {
-            const data = await response.json();
-            country = data.country_code?.toUpperCase() || '';
-
-            // Cache in cookie for 7 days
-            res.cookie('country_code', country, {
-              maxAge: 7 * 24 * 60 * 60 * 1000,
-              httpOnly: false,
-              secure: true,
-              sameSite: 'Lax'
-            });
-
-            console.log(`GeoIP: ${clientIp} -> ${country}`);
-          } else {
-            console.warn(`GeoIP API error: ${response.status}`);
-            return next();
-          }
-        } catch (error) {
-          console.error('GeoIP lookup failed:', error.message);
-          return next();
-        }
+        this.log.info('Geo redirect skipped: no country detected', {
+          host,
+          path: req.originalUrl,
+          ip: clientIp,
+          cookieCountry: req.cookies?.[GEO_COOKIE_NAME] || null,
+        });
+        return next();
       }
 
       // Determine target domain based on country
@@ -145,7 +118,13 @@ export class Server {
       // If not on the correct domain, redirect
       if (host !== targetDomain) {
         const targetUrl = `https://${targetDomain}${req.originalUrl || ''}`;
-        console.log(`Redirecting: ${host} -> ${targetDomain} (Country: ${country})`);
+        this.log.info('Geo redirect', {
+          fromHost: host,
+          toHost: targetDomain,
+          country,
+          ip: clientIp,
+          path: req.originalUrl,
+        });
         return res.redirect(302, targetUrl);
       }
 
@@ -153,8 +132,124 @@ export class Server {
     });
   }
 
+  normalizeCountryCode(value) {
+    if (!value || typeof value !== 'string') return null;
+    const country = value.trim().toUpperCase();
+    return /^[A-Z]{2}$/.test(country) ? country : null;
+  }
+
+  normalizeIp(rawIp) {
+    if (!rawIp || typeof rawIp !== 'string') return null;
+    let ip = rawIp.trim();
+    if (!ip) return null;
+
+    if (ip.includes(',')) {
+      [ip] = ip.split(',');
+      ip = ip.trim();
+    }
+
+    if (ip.startsWith('::ffff:')) {
+      ip = ip.slice('::ffff:'.length);
+    }
+
+    if (ip.startsWith('[') && ip.endsWith(']')) {
+      ip = ip.slice(1, -1);
+    }
+
+    if (/^\d+\.\d+\.\d+\.\d+:\d+$/.test(ip)) {
+      [ip] = ip.split(':');
+    }
+
+    return ip;
+  }
+
+  isPrivateIp(ip) {
+    if (!ip) return true;
+
+    const normalized = ip.toLowerCase();
+    if (normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost') {
+      return true;
+    }
+
+    if (normalized.startsWith('10.') || normalized.startsWith('192.168.') || normalized.startsWith('169.254.')) {
+      return true;
+    }
+
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(normalized)) {
+      return true;
+    }
+
+    if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  getClientIpFromRequest(req) {
+    const xForwardedFor = req.headers['x-forwarded-for'];
+    const forwardedList = typeof xForwardedFor === 'string'
+      ? xForwardedFor.split(',').map((item) => item.trim())
+      : [];
+
+    const candidates = [
+      req.headers['cf-connecting-ip'],
+      req.headers['x-real-ip'],
+      ...forwardedList,
+      req.ip,
+      req.socket?.remoteAddress,
+    ];
+
+    for (const candidate of candidates) {
+      const ip = this.normalizeIp(candidate);
+      if (!ip || this.isPrivateIp(ip)) {
+        continue;
+      }
+      return ip;
+    }
+
+    return null;
+  }
+
+  async fetchCountryCodeFromIpApi(ip) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      const response = await fetch(`https://ipapi.co/${ip}/json/`, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'illorac-geo-redirect/1.0',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        this.log.warn('GeoIP API response not OK', { status: response.status, ip });
+        return null;
+      }
+
+      const data = await response.json();
+      const country = this.normalizeCountryCode(data?.country_code);
+
+      if (!country) {
+        this.log.warn('GeoIP API returned invalid country', { ip, response: data });
+        return null;
+      }
+
+      return country;
+    } catch (error) {
+      this.log.warn('GeoIP lookup failed', {
+        ip,
+        error: error?.message || 'Unknown error',
+      });
+      return null;
+    }
+  }
+
   securityMiddleware(app) {
-    app.set('trust proxy', 1);
+    app.set('trust proxy', true);
     app.use(hpp());
 
     app.use(
@@ -272,26 +367,33 @@ export class Server {
       });
     });
 
-    // ✅ Debug endpoint - REMOVE AFTER TESTING
+    // Debug endpoint for geo decision verification
     app.get('/debug-geo', async (req, res) => {
-      const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-        req.socket?.remoteAddress ||
-        req.ip;
-
+      const clientIp = this.getClientIpFromRequest(req);
       let geoData = null;
-      try {
-        const response = await fetch(`https://ipapi.co/${clientIp}/json/`);
-        geoData = await response.json();
-      } catch (e) {
-        geoData = { error: e.message };
+
+      if (clientIp) {
+        try {
+          const response = await fetch(`https://ipapi.co/${clientIp}/json/`);
+          geoData = await response.json();
+        } catch (e) {
+          geoData = { error: e.message };
+        }
       }
+
+      const country = this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME])
+        || this.normalizeCountryCode(geoData?.country_code);
+      const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
 
       res.json({
         clientIp,
         host: req.hostname,
-        cookie: req.cookies?.country_code || 'NOT SET',
+        forwardedFor: req.headers['x-forwarded-for'] || null,
+        cfConnectingIp: req.headers['cf-connecting-ip'] || null,
+        cookie: req.cookies?.[GEO_COOKIE_NAME] || 'NOT SET',
         geoData,
-        targetDomain: (geoData?.country_code?.toUpperCase() === 'NL') ? 'illorac.nl' : 'illorac.com'
+        resolvedCountry: country || 'UNKNOWN',
+        targetDomain,
       });
     });
   }
