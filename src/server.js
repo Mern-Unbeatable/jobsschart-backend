@@ -55,8 +55,10 @@ export class Server {
 
   geoRedirectMiddleware(app) {
     app.use(async (req, res, next) => {
-      // Skip in non-production environments
-      if (config.NODE_ENV !== 'production') {
+      const host = this.getRequestHost(req);
+
+      // Run geo redirect only on our public domains
+      if (!GEO_SUPPORTED_HOSTS.includes(host)) {
         return next();
       }
 
@@ -73,15 +75,6 @@ export class Server {
         req.path.startsWith('/api-monitoring') ||
         req.path === '/health'
       ) {
-        return next();
-      }
-
-      const host = String(req.hostname || '')
-        .toLowerCase()
-        .replace(/^www\./, '');
-
-      // Only redirect if request is coming to one of our supported domains
-      if (!GEO_SUPPORTED_HOSTS.includes(host)) {
         return next();
       }
 
@@ -103,13 +96,12 @@ export class Server {
       }
 
       if (!country) {
-        this.log.info('Geo redirect skipped: no country detected', {
+        this.log.warn('Geo country unavailable, defaulting to .com routing', {
           host,
           path: req.originalUrl,
           ip: clientIp,
           cookieCountry: req.cookies?.[GEO_COOKIE_NAME] || null,
         });
-        return next();
       }
 
       // Determine target domain based on country
@@ -130,6 +122,25 @@ export class Server {
 
       next();
     });
+  }
+
+  getRequestHost(req) {
+    const forwardedHostRaw = req.headers['x-forwarded-host'];
+    const hostRaw = typeof forwardedHostRaw === 'string' && forwardedHostRaw.length > 0
+      ? forwardedHostRaw
+      : (req.headers.host || req.hostname || '');
+
+    let host = String(hostRaw)
+      .split(',')[0]
+      .trim()
+      .toLowerCase()
+      .replace(/^www\./, '');
+
+    if (host.includes(':')) {
+      [host] = host.split(':');
+    }
+
+    return host;
   }
 
   normalizeCountryCode(value) {
