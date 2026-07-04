@@ -12,6 +12,7 @@ import path from 'path';
 import fs from 'fs';
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
+import cookieParser from 'cookie-parser';  // ✅ ADD THIS IMPORT
 
 import { config } from './config/config.js';
 import applicationRoutes from './routes/index.js';
@@ -38,17 +39,18 @@ export class Server {
   configure() {
     if (this.isConfigured) return;
     this.securityMiddleware(this.app);
-    this.geoRedirectMiddleware(this.app);
+    this.standardMiddleware(this.app);       // ✅ MOVED UP - cookieParser must be first
+    this.geoRedirectMiddleware(this.app);    // ✅ AFTER cookieParser
     this.webhookRawBody(this.app);
-    this.standardMiddleware(this.app);
     this.staticFileMiddleware(this.app);
     this.routesMiddleware(this.app);
     this.apiMonitoring(this.app);
     this.globalErrorHandler(this.app);
     this.isConfigured = true;
   }
+
   geoRedirectMiddleware(app) {
-    app.use((req, res, next) => {
+    app.use(async (req, res, next) => {
       // Skip in non-production environments
       if (config.NODE_ENV !== 'production') {
         return next();
@@ -59,12 +61,17 @@ export class Server {
         return next();
       }
 
-      // Skip API and static paths
-      if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
+      // Skip API, static paths, and websocket
+      if (
+        req.path.startsWith('/api/') ||
+        req.path.startsWith('/uploads/') ||
+        req.path.startsWith('/socket.io/') ||
+        req.path.startsWith('/api-monitoring') ||
+        req.path === '/health'
+      ) {
         return next();
       }
 
-      //  Define supported hosts FIRST
       const supportedHosts = ['illorac.com', 'illorac.nl'];
 
       const host = String(req.hostname || '')
@@ -76,19 +83,61 @@ export class Server {
         return next();
       }
 
-      // Get country from headers (Cloudflare or Vercel)
-      const country = String(
-        req.headers['cf-ipcountry'] ||
-        req.headers['x-vercel-ip-country'] ||
-        ''
-      ).toUpperCase();
+      // ✅ Now req.cookies will work because cookieParser is loaded first
+      let country = req.cookies?.country_code || null;
 
-      //  Log for debugging (remove in production later)
-      console.log('Geo Redirect Debug:', {
-        host,
-        country: country || 'UNKNOWN',
-        targetDomain: country === 'NL' ? 'illorac.nl' : 'illorac.com'
-      });
+      if (!country) {
+        // Get client IP (considering proxy/trust proxy setting)
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+          req.socket?.remoteAddress ||
+          req.ip ||
+          '127.0.0.1';
+
+        // Skip localhost/private IPs
+        if (
+          clientIp === '127.0.0.1' ||
+          clientIp === '::1' ||
+          clientIp.startsWith('192.168.') ||
+          clientIp.startsWith('10.')
+        ) {
+          return next();
+        }
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+          const response = await fetch(`https://ipapi.co/${clientIp}/json/`, {
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'illorac-geo-redirect/1.0'
+            }
+          });
+
+          clearTimeout(timeoutId);
+
+          if (response.ok) {
+            const data = await response.json();
+            country = data.country_code?.toUpperCase() || '';
+
+            // Cache in cookie for 7 days
+            res.cookie('country_code', country, {
+              maxAge: 7 * 24 * 60 * 60 * 1000,
+              httpOnly: false,
+              secure: true,
+              sameSite: 'Lax'
+            });
+
+            console.log(`GeoIP: ${clientIp} -> ${country}`);
+          } else {
+            console.warn(`GeoIP API error: ${response.status}`);
+            return next();
+          }
+        } catch (error) {
+          console.error('GeoIP lookup failed:', error.message);
+          return next();
+        }
+      }
 
       // Determine target domain based on country
       const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
@@ -96,6 +145,7 @@ export class Server {
       // If not on the correct domain, redirect
       if (host !== targetDomain) {
         const targetUrl = `https://${targetDomain}${req.originalUrl || ''}`;
+        console.log(`Redirecting: ${host} -> ${targetDomain} (Country: ${country})`);
         return res.redirect(302, targetUrl);
       }
 
@@ -107,7 +157,6 @@ export class Server {
     app.set('trust proxy', 1);
     app.use(hpp());
 
-    // Helmet configuration - less strict for static files
     app.use(
       helmet({
         crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -118,8 +167,8 @@ export class Server {
 
     const allowedOrigins = [
       'http://localhost:5173',
-      "https://illorac.com",
-      "https://illorac.nl"
+      'https://illorac.com',
+      'https://illorac.nl'
     ];
 
     app.use(
@@ -129,7 +178,6 @@ export class Server {
           if (allowedOrigins.includes(origin)) {
             return callback(null, true);
           }
-          // Allow all localhost origins for development
           if (origin && origin.includes('localhost')) {
             return callback(null, true);
           }
@@ -155,6 +203,9 @@ export class Server {
   }
 
   standardMiddleware(app) {
+    // ✅ cookie-parser FIRST
+    app.use(cookieParser());
+
     // HTTP request logger
     app.use(morgan(config.NODE_ENV === 'development' ? 'dev' : 'combined'));
 
@@ -171,9 +222,7 @@ export class Server {
     app.use(passport.initialize());
   }
 
-  // Static file middleware - SIMPLIFIED like your working project
   staticFileMiddleware(app) {
-    //  Same root as the upload utility — always project root
     const uploadsPath = path.join(process.cwd(), "uploads");
 
     if (!fs.existsSync(uploadsPath)) {
@@ -196,7 +245,6 @@ export class Server {
   }
 
   routesMiddleware(app) {
-    // Mount all API routes
     applicationRoutes(app);
 
     // Health check endpoint
@@ -223,6 +271,29 @@ export class Server {
         }
       });
     });
+
+    // ✅ Debug endpoint - REMOVE AFTER TESTING
+    app.get('/debug-geo', async (req, res) => {
+      const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+        req.socket?.remoteAddress ||
+        req.ip;
+
+      let geoData = null;
+      try {
+        const response = await fetch(`https://ipapi.co/${clientIp}/json/`);
+        geoData = await response.json();
+      } catch (e) {
+        geoData = { error: e.message };
+      }
+
+      res.json({
+        clientIp,
+        host: req.hostname,
+        cookie: req.cookies?.country_code || 'NOT SET',
+        geoData,
+        targetDomain: (geoData?.country_code?.toUpperCase() === 'NL') ? 'illorac.nl' : 'illorac.com'
+      });
+    });
   }
 
   apiMonitoring(app) {
@@ -231,7 +302,6 @@ export class Server {
   }
 
   globalErrorHandler(app) {
-    // Handle 404 for API routes
     app.use((req, res, next) => {
       if (req.path.startsWith('/api/')) {
         res.status(HTTP_STATUS.NOT_FOUND).json({
@@ -244,7 +314,6 @@ export class Server {
       }
     });
 
-    // Global error handler
     app.use((error, _req, res, _next) => {
       this.log.error('Global error handler', {
         name: error.name,
@@ -272,7 +341,6 @@ export class Server {
         });
       }
 
-      // Prisma errors
       if (error.code === 'P2002') {
         return res.status(HTTP_STATUS.CONFLICT).json({
           status: 'error',
@@ -312,7 +380,6 @@ export class Server {
     }
   }
 
-
   startHttpServer(httpServer) {
     this.log.info(`Worker started (PID: ${process.pid})`);
     initSocket(httpServer);
@@ -334,6 +401,4 @@ export class Server {
       }
     });
   }
-
-
 }
