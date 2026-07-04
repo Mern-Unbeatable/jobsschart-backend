@@ -27,12 +27,14 @@ const __dirname = path.dirname(__filename);
 const GEO_COOKIE_NAME = 'country_code';
 const GEO_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000;
 const GEO_SUPPORTED_HOSTS = ['illorac.com', 'illorac.nl'];
+const GEO_IP_CACHE_TTL = 6 * 60 * 60 * 1000;
 
 export class Server {
   constructor(app) {
     this.app = app;
     this.log = new Logger('Server');
     this.isConfigured = false;
+    this.geoIpCache = new Map();
   }
 
   start() {
@@ -222,19 +224,43 @@ export class Server {
     return null;
   }
 
-  async fetchCountryCodeFromIpApi(ip) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+  getCachedCountryByIp(ip) {
+    if (!ip) return null;
+    const cached = this.geoIpCache.get(ip);
+    if (!cached) return null;
 
-      const response = await fetch(`https://ipapi.co/${ip}/json/`, {
+    if (Date.now() > cached.expiresAt) {
+      this.geoIpCache.delete(ip);
+      return null;
+    }
+
+    return cached.country;
+  }
+
+  setCachedCountryByIp(ip, country) {
+    if (!ip || !country) return;
+    this.geoIpCache.set(ip, {
+      country,
+      expiresAt: Date.now() + GEO_IP_CACHE_TTL,
+    });
+  }
+
+  async fetchGeoDataFromIpApi(ip) {
+    const apiKey = process.env.IPAPI_API_KEY?.trim();
+    const endpoint = apiKey
+      ? `https://ipapi.co/${ip}/json/?key=${encodeURIComponent(apiKey)}`
+      : `https://ipapi.co/${ip}/json/`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    try {
+      const response = await fetch(endpoint, {
         signal: controller.signal,
         headers: {
           'User-Agent': 'illorac-geo-redirect/1.0',
         },
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         this.log.warn('GeoIP API response not OK', { status: response.status, ip });
@@ -242,12 +268,38 @@ export class Server {
       }
 
       const data = await response.json();
+      if (data?.error) {
+        this.log.warn('GeoIP API returned error payload', {
+          ip,
+          reason: data.reason || null,
+          message: data.message || null,
+        });
+      }
+
+      return data;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async fetchCountryCodeFromIpApi(ip) {
+    const cachedCountry = this.getCachedCountryByIp(ip);
+    if (cachedCountry) {
+      return cachedCountry;
+    }
+
+    try {
+      const data = await this.fetchGeoDataFromIpApi(ip);
+      if (!data) return null;
+
       const country = this.normalizeCountryCode(data?.country_code);
 
       if (!country) {
         this.log.warn('GeoIP API returned invalid country', { ip, response: data });
         return null;
       }
+
+      this.setCachedCountryByIp(ip, country);
 
       return country;
     } catch (error) {
@@ -380,13 +432,13 @@ export class Server {
 
     // Debug endpoint for geo decision verification
     app.get('/debug-geo', async (req, res) => {
+      const host = this.getRequestHost(req);
       const clientIp = this.getClientIpFromRequest(req);
       let geoData = null;
 
       if (clientIp) {
         try {
-          const response = await fetch(`https://ipapi.co/${clientIp}/json/`);
-          geoData = await response.json();
+          geoData = await this.fetchGeoDataFromIpApi(clientIp);
         } catch (e) {
           geoData = { error: e.message };
         }
@@ -395,14 +447,22 @@ export class Server {
       const country = this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME])
         || this.normalizeCountryCode(geoData?.country_code);
       const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
+      const redirectEligibleHost = GEO_SUPPORTED_HOSTS.includes(host);
 
       res.json({
         clientIp,
-        host: req.hostname,
+        host,
         forwardedFor: req.headers['x-forwarded-for'] || null,
+        forwardedHost: req.headers['x-forwarded-host'] || null,
         cfConnectingIp: req.headers['cf-connecting-ip'] || null,
         cookie: req.cookies?.[GEO_COOKIE_NAME] || 'NOT SET',
         geoData,
+        usingIpApiKey: !!process.env.IPAPI_API_KEY,
+        cacheHit: !!(clientIp && this.getCachedCountryByIp(clientIp)),
+        redirectEligibleHost,
+        redirectReason: redirectEligibleHost
+          ? 'Host is eligible for geo redirect'
+          : 'Host is not in GEO_SUPPORTED_HOSTS. Redirect middleware is skipped.',
         resolvedCountry: country || 'UNKNOWN',
         targetDomain,
       });

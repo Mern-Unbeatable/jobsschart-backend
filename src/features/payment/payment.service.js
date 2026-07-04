@@ -40,6 +40,51 @@ class PaymentService {
     return wallet;
   }
 
+  _normalizePaymentAmountFromSession(session) {
+    const total = Number(session?.amount_total ?? 0);
+    return Number.isFinite(total) ? total / 100 : 0;
+  }
+
+  async _recreatePaymentFromSession(session, userId) {
+    const metadata = session?.metadata || {};
+    const type = metadata.type;
+
+    if (!type || !['PACKAGE', 'DONATION', 'WEBSHOP'].includes(type)) {
+      throw new BadRequestError('Invalid payment type in Stripe session metadata');
+    }
+
+    const metadataUserId = metadata.userId;
+    if (metadataUserId && metadataUserId !== userId) {
+      throw new ForbiddenError('You are not authorized to verify this payment');
+    }
+
+    const created = await prisma.payment.create({
+      data: {
+        userId,
+        packageId: type === 'PACKAGE' ? (metadata.packageId || null) : null,
+        amount: this._normalizePaymentAmountFromSession(session),
+        creditsAdded: null,
+        type,
+        status: 'PENDING',
+        stripeSessionId: session.id,
+        stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : '',
+        stripeCustomerId: typeof session.customer === 'string' ? session.customer : null,
+      },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        status: true,
+        donationId: true,
+        orderId: true,
+        packageId: true,
+      },
+    });
+
+    log.warn(`Recovered missing payment row from Stripe session: ${session.id}`);
+    return created;
+  }
+
   async _getOrCreateStripeCustomer(userId) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -229,15 +274,11 @@ class PaymentService {
         metadata.shipping_email = completeAddress.email;
         metadata.shipping_phone = completeAddress.phone;
 
-        log.info(`📦 WEBSHOP - Original shippingAddress: ${JSON.stringify(shippingAddress)}`);
-        log.info(`📦 WEBSHOP - Complete address stored: ${JSON.stringify(completeAddress)}`);
       }
 
       if (phone) metadata.customerPhone = phone;
 
-      // ── Delivery fee (WEBSHOP only) ──────────────────────────────
-      // Keep the cart subtotal in metadata so the webhook can rebuild
-      // the exact same total without re-deriving it from product prices.
+
       metadata.itemsSubtotal = String(amount);
       metadata.deliveryFee = String(WEBSHOP_DELIVERY_FEE);
 
@@ -254,7 +295,6 @@ class PaymentService {
       });
 
       amount += WEBSHOP_DELIVERY_FEE;
-      // ──────────────────────────────────────────────────────────────
 
       metadata.cartItems = JSON.stringify(cartItems);
 
@@ -580,10 +620,10 @@ class PaymentService {
 
   async verifyAndUnlock(sessionId, userId) {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    const payment = await this._getPaymentBySessionId(sessionId);
+    let payment = await this._getPaymentBySessionId(sessionId);
 
     if (!payment) {
-      throw new NotFoundError('Payment record not found for this session');
+      payment = await this._recreatePaymentFromSession(session, userId);
     }
 
     if (payment.userId !== userId) {
