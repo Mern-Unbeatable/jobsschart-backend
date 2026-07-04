@@ -75,6 +75,7 @@ export class Server {
         req.path.startsWith('/uploads/') ||
         req.path.startsWith('/socket.io/') ||
         req.path.startsWith('/api-monitoring') ||
+        req.path === '/geo-routing' ||
         req.path === '/health'
       ) {
         return next();
@@ -427,6 +428,46 @@ export class Server {
           api: '/api/v1',
           uploads: '/uploads'
         }
+      });
+    });
+
+    // Public endpoint for frontend geo-based domain routing decisions
+    app.get('/geo-routing', async (req, res) => {
+      const host = this.getRequestHost(req);
+      const clientIp = this.getClientIpFromRequest(req);
+      const hostEligible = GEO_SUPPORTED_HOSTS.includes(host);
+
+      let country = this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME]);
+      let source = country ? 'cookie' : 'none';
+
+      if (!country && clientIp) {
+        country = await this.fetchCountryCodeFromIpApi(clientIp);
+        source = country ? 'ipapi' : 'unavailable';
+
+        if (country) {
+          const requestIsSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+          res.cookie(GEO_COOKIE_NAME, country, {
+            maxAge: GEO_COOKIE_MAX_AGE,
+            httpOnly: false,
+            secure: requestIsSecure,
+            sameSite: 'Lax',
+          });
+        }
+      }
+
+      const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
+      const shouldRedirect = hostEligible && host !== targetDomain;
+
+      res.set('Cache-Control', 'no-store');
+      res.json({
+        host,
+        hostEligible,
+        clientIp,
+        country: country || 'UNKNOWN',
+        source,
+        targetDomain,
+        shouldRedirect,
+        targetUrl: shouldRedirect ? `https://${targetDomain}${req.originalUrl || '/'}` : null,
       });
     });
 
