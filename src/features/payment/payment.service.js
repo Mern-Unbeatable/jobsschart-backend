@@ -2,6 +2,7 @@ import Stripe from 'stripe';
 import { prisma } from '../../config/db.js';
 import { config } from '../../config/config.js';
 import { Logger } from '../../config/logger.js';
+import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/globals/helpers/error-handler.js';
 
 const stripe = new Stripe(config.STRIPE_SECRET_KEY);
 const log = new Logger('PaymentService');
@@ -11,6 +12,21 @@ const log = new Logger('PaymentService');
 const WEBSHOP_DELIVERY_FEE = 15.00;
 
 class PaymentService {
+  async _getPaymentBySessionId(sessionId) {
+    return prisma.payment.findFirst({
+      where: { stripeSessionId: sessionId },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        status: true,
+        donationId: true,
+        orderId: true,
+        packageId: true,
+      },
+    });
+  }
+
   async _ensureWallet(userId) {
     let wallet = await prisma.wallet.findUnique({
       where: { userId },
@@ -294,7 +310,6 @@ class PaymentService {
     const { userId, type } = session.metadata;
     log.info(`Processing: type=${type} user=${userId} session=${session.id}`);
 
-    // Log all metadata for debugging
     log.info(`📋 Session metadata: ${JSON.stringify(session.metadata)}`);
 
     const existingPayment = await prisma.payment.findFirst({
@@ -320,7 +335,15 @@ class PaymentService {
   }
 
   async _savePackagePurchase(session) {
-    const { userId, packageId } = session.metadata;
+    const payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
+
+    const userId = payment.userId;
+    const packageId = session.metadata?.packageId;
+
+    if (!packageId) {
+      throw new BadRequestError(`Missing packageId in metadata for session ${session.id}`);
+    }
 
     const pkg = await prisma.package.findUnique({ where: { id: packageId } });
     if (!pkg) {
@@ -377,15 +400,29 @@ class PaymentService {
 
   async _saveDonation(session) {
     const m = session.metadata;
+    const payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
+
+    if (payment.donationId) {
+      log.info(`Donation already linked for session ${session.id} -> ${payment.donationId}`);
+      return;
+    }
+
+    const donorId = payment.userId;
+    const donationAmount = parseInt(m.donationAmount, 10);
+
+    if (!m.donorType || !m.donorName || !m.donorPhone || !m.donorEmail || !m.benefit || !Number.isFinite(donationAmount)) {
+      throw new BadRequestError('Invalid donation metadata for this Stripe session');
+    }
 
     await prisma.$transaction(async (tx) => {
       const donationData = {
-        donorId: m.userId,
+        donorId,
         donorType: m.donorType,
         name: m.donorName,
         phone: m.donorPhone,
         email: m.donorEmail,
-        amount: parseInt(m.donationAmount),
+        amount: donationAmount,
         description: m.donationDescription || null,
         location: m.donationLocation || null,
         image: m.donationImage || null,
@@ -406,11 +443,11 @@ class PaymentService {
 
       await tx.adCampaign.create({
         data: {
-          donorId: m.userId,
+          donorId,
           title: `Donation Campaign - ${m.benefit}`,
           description: m.donationDescription || null,
           image: m.donationImage || null,
-          budget: parseInt(m.donationAmount),
+          budget: donationAmount,
           spentAmount: 0,
           status: 'PENDING',
           linkUrl: m.websiteUrl || null,
@@ -421,11 +458,20 @@ class PaymentService {
       });
     });
 
-    log.info(`Donation saved + AdCampaign created for user ${m.userId}`);
+    log.info(`Donation saved + AdCampaign created for user ${donorId}`);
   }
 
   async _saveOrder(session) {
     const m = session.metadata;
+    const payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
+
+    if (payment.orderId) {
+      log.info(`Order already linked for session ${session.id} -> ${payment.orderId}`);
+      return;
+    }
+
+    const userId = payment.userId;
     const cartItems = JSON.parse(m.cartItems);
 
     let shippingAddress = null;
@@ -503,7 +549,7 @@ class PaymentService {
     await prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
-          userId: m.userId,
+          userId,
           totalAmount,
           deliveryFee,
           status: 'PROCESSING',
@@ -529,27 +575,38 @@ class PaymentService {
       }
     });
 
-    log.info(`Order created for user ${m.userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
+    log.info(`Order created for user ${userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
   }
 
   async verifyAndUnlock(sessionId, userId) {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const payment = await this._getPaymentBySessionId(sessionId);
+
+    if (!payment) {
+      throw new NotFoundError('Payment record not found for this session');
+    }
+
+    if (payment.userId !== userId) {
+      throw new ForbiddenError('You are not authorized to verify this payment');
+    }
 
     if (session.payment_status !== 'paid') {
       return { paid: false, message: 'Payment not completed' };
     }
 
-    const existing = await prisma.payment.findFirst({
-      where: { stripeSessionId: sessionId, status: 'SUCCESS' },
-    });
+    const existing = payment.status === 'SUCCESS';
 
     if (!existing) {
-      const { type } = session.metadata;
+      const type = payment.type;
 
-      await prisma.payment.updateMany({
+      const updateResult = await prisma.payment.updateMany({
         where: { stripeSessionId: sessionId, userId, status: 'PENDING' },
         data: { status: 'SUCCESS', stripePaymentIntentId: session.payment_intent || '' },
       });
+
+      if (updateResult.count === 0) {
+        log.warn(`Verify skipped: payment already processed or missing PENDING row for session ${sessionId}`);
+      }
 
       if (type === 'PACKAGE') await this._savePackagePurchase(session);
       if (type === 'DONATION') await this._saveDonation(session);
@@ -559,8 +616,8 @@ class PaymentService {
     const wallet = await prisma.wallet.findUnique({ where: { userId } });
     return {
       paid: true,
-      alreadyProcessed: !!existing,
-      type: session.metadata.type,
+      alreadyProcessed: existing,
+      type: payment.type,
       creditsRemaining: Number(wallet?.creditBalance || 0),
     };
   }
