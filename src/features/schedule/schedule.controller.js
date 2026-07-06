@@ -12,18 +12,43 @@ class ScheduleController {
     constructor() {
         this.log = new Logger('ScheduleController');
     }
-
     createBooking = catchAsync(async (req, res) => {
-        const userId = req.user.id;
-        const data = createBookingSchema.parse(req.body);
+        try {
+            const userId = req.user.id;
+            const data = createBookingSchema.parse(req.body);
 
-        const booking = await scheduleService.createBooking(userId, data);
+            const booking = await scheduleService.createBooking(userId, data);
 
-        ResponseHandler.created(res, {
-            message: 'Booking created successfully',
-            data: { booking },
-        });
+            ResponseHandler.created(res, {
+                message: 'Booking created successfully',
+                data: { booking },
+            });
+        } catch (error) {
+            console.error('Booking creation error:', error);
+
+            // Handle Zod validation errors
+            if (error.name === 'ZodError') {
+                return ResponseHandler.badRequest(res, {
+                    message: 'Validation error',
+                    errors: error.errors,
+                });
+            }
+
+            // Handle business logic errors
+            if (error.message) {
+                return ResponseHandler.badRequest(res, {
+                    message: error.message,
+                });
+            }
+
+            // For unexpected errors
+            return ResponseHandler.error(res, {
+                message: 'Failed to create booking',
+                error: error.message,
+            });
+        }
     });
+
 
     getMyBookings = catchAsync(async (req, res) => {
         const userId = req.user.id;

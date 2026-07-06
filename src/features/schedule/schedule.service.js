@@ -92,6 +92,22 @@ class ScheduleService {
             throw new Error('Invalid date/time format');
         }
 
+        // Get day of week for the booking date
+        const dayOfWeek = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][startDateTime.getDay()];
+
+        // Check if the day is within consultant's availability
+        const consultantSlots = await prisma.availabilitySlot.findMany({
+            where: {
+                consultantId,
+                dayOfWeek,
+                isActive: true,
+            },
+        });
+
+        if (consultantSlots.length === 0) {
+            throw new Error(`No availability slots found for ${dayOfWeek}. Consultant is only available on weekdays.`);
+        }
+
         const consultant = await prisma.consultant.findUnique({
             where: { id: consultantId },
             include: { user: true }
@@ -100,14 +116,33 @@ class ScheduleService {
         if (!consultant) throw new Error('Consultant not found');
         if (!consultant.isApproved) throw new Error('Consultant is not approved');
 
-        // Use availability service to check if time slot is available
+        // Check if the requested time falls within any availability slot
+        let isWithinSlot = false;
+        const requestedStart = startDateTime.getHours() * 60 + startDateTime.getMinutes();
+        const requestedEnd = endDateTime.getHours() * 60 + endDateTime.getMinutes();
+
+        for (const slot of consultantSlots) {
+            const slotStart = parseInt(slot.startTime.split(':')[0]) * 60 + parseInt(slot.startTime.split(':')[1]);
+            const slotEnd = parseInt(slot.endTime.split(':')[0]) * 60 + parseInt(slot.endTime.split(':')[1]);
+
+            if (requestedStart >= slotStart && requestedEnd <= slotEnd) {
+                isWithinSlot = true;
+                break;
+            }
+        }
+
+        if (!isWithinSlot) {
+            throw new Error(`Requested time (${startTime} - ${endTime}) does not fall within any available slot for ${dayOfWeek}`);
+        }
+
+        // Use availability service to check if time slot is available (not already booked)
         const isAvailable = await this.isTimeSlotAvailable(
             consultantId,
             startDateTime,
             (endDateTime - startDateTime) / (1000 * 60)
         );
 
-        if (!isAvailable) throw new Error('Time slot is not available');
+        if (!isAvailable) throw new Error('Time slot is not available or already booked');
 
         const wallet = await prisma.wallet.findUnique({
             where: { userId },
@@ -127,7 +162,7 @@ class ScheduleService {
                 data: {
                     userId,
                     consultantId,
-                    bookingDate: new Date(bookingDate),
+                    bookingDate: startDateTime,
                     startTime: startDateTime,
                     endTime: endDateTime,
                     status: 'PENDING',

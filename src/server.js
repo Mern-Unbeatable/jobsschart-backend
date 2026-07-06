@@ -12,7 +12,7 @@ import path from 'path';
 import fs from 'fs';
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
-import cookieParser from 'cookie-parser';  // ✅ ADD THIS IMPORT
+import cookieParser from 'cookie-parser';
 
 import { config } from './config/config.js';
 import applicationRoutes from './routes/index.js';
@@ -45,8 +45,8 @@ export class Server {
   configure() {
     if (this.isConfigured) return;
     this.securityMiddleware(this.app);
-    this.standardMiddleware(this.app);       // ✅ MOVED UP - cookieParser must be first
-    this.geoRedirectMiddleware(this.app);    // ✅ AFTER cookieParser
+    this.standardMiddleware(this.app);
+    this.geoRedirectMiddleware(this.app);
     this.webhookRawBody(this.app);
     this.staticFileMiddleware(this.app);
     this.routesMiddleware(this.app);

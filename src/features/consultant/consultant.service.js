@@ -52,6 +52,7 @@ class ConsultantService {
                     orderBy: { bookingDate: 'asc' },
                     take: 10,
                 },
+                availabilitySlots: true,
             },
         });
 

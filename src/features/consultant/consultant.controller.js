@@ -27,6 +27,7 @@ class ConsultantController {
         });
     });
 
+
     updateMyConsultantProfile = catchAsync(async (req, res) => {
         const userId = req.user.id;
         const data = updateConsultantProfileSchema.parse(req.body);
@@ -87,27 +88,27 @@ class ConsultantController {
     });
 
 
-getEarningsDashboard = catchAsync(async (req, res) => {
-    const userId = req.user.id;
-    const dashboardData = await consultantService.getEarningsDashboard(userId);
+    getEarningsDashboard = catchAsync(async (req, res) => {
+        const userId = req.user.id;
+        const dashboardData = await consultantService.getEarningsDashboard(userId);
 
-    ResponseHandler.success(res, {
-        message: 'Earnings dashboard fetched successfully',
-        data: dashboardData,
+        ResponseHandler.success(res, {
+            message: 'Earnings dashboard fetched successfully',
+            data: dashboardData,
+        });
     });
-});
 
-getEarningsOverTime = catchAsync(async (req, res) => {
-    const userId = req.user.id;
-    const { period = 'monthly' } = req.query;
-    
-    const data = await consultantService.getEarningsOverTime(userId, period);
+    getEarningsOverTime = catchAsync(async (req, res) => {
+        const userId = req.user.id;
+        const { period = 'monthly' } = req.query;
 
-    ResponseHandler.success(res, {
-        message: 'Earnings over time fetched successfully',
-        data,
+        const data = await consultantService.getEarningsOverTime(userId, period);
+
+        ResponseHandler.success(res, {
+            message: 'Earnings over time fetched successfully',
+            data,
+        });
     });
-});
 
 
 }
