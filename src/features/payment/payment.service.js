@@ -4,6 +4,7 @@ import { config } from '../../config/config.js';
 import { Logger } from '../../config/logger.js';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/globals/helpers/error-handler.js';
 
+
 const stripe = new Stripe(config.STRIPE_SECRET_KEY);
 const log = new Logger('PaymentService');
 
@@ -352,13 +353,9 @@ class PaymentService {
 
     log.info(`📋 Session metadata: ${JSON.stringify(session.metadata)}`);
 
-    const existingPayment = await prisma.payment.findFirst({
-      where: { stripeSessionId: session.id, status: 'SUCCESS' },
-    });
-
-    if (existingPayment) {
-      log.info(`Already processed: ${session.id}`);
-      return;
+    let payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) {
+      payment = await this._recreatePaymentFromSession(session, userId);
     }
 
     await prisma.payment.updateMany({
@@ -369,14 +366,38 @@ class PaymentService {
       },
     });
 
-    if (type === 'PACKAGE') await this._savePackagePurchase(session);
-    if (type === 'DONATION') await this._saveDonation(session);
-    if (type === 'WEBSHOP') await this._saveOrder(session);
+    await this._runPostPaymentActions(type, session);
+  }
+
+  async _runPostPaymentActions(type, session) {
+    if (type === 'PACKAGE') {
+      await this._savePackagePurchase(session);
+      return;
+    }
+    if (type === 'DONATION') {
+      await this._saveDonation(session);
+      return;
+    }
+    if (type === 'WEBSHOP') {
+      await this._saveOrder(session);
+      return;
+    }
+
+    throw new BadRequestError(`Unsupported payment type: ${type}`);
   }
 
   async _savePackagePurchase(session) {
     const payment = await this._getPaymentBySessionId(session.id);
     if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
+
+    const existingPurchase = await prisma.packagePurchase.findFirst({
+      where: { stripeSessionId: session.id },
+      select: { id: true },
+    });
+    if (existingPurchase) {
+      log.info(`Package purchase already linked for session ${session.id}`);
+      return;
+    }
 
     const userId = payment.userId;
     const packageId = session.metadata?.packageId;
@@ -636,22 +657,16 @@ class PaymentService {
 
     const existing = payment.status === 'SUCCESS';
 
-    if (!existing) {
-      const type = payment.type;
+    const updateResult = await prisma.payment.updateMany({
+      where: { stripeSessionId: sessionId, userId, status: 'PENDING' },
+      data: { status: 'SUCCESS', stripePaymentIntentId: session.payment_intent || '' },
+    });
 
-      const updateResult = await prisma.payment.updateMany({
-        where: { stripeSessionId: sessionId, userId, status: 'PENDING' },
-        data: { status: 'SUCCESS', stripePaymentIntentId: session.payment_intent || '' },
-      });
-
-      if (updateResult.count === 0) {
-        log.warn(`Verify skipped: payment already processed or missing PENDING row for session ${sessionId}`);
-      }
-
-      if (type === 'PACKAGE') await this._savePackagePurchase(session);
-      if (type === 'DONATION') await this._saveDonation(session);
-      if (type === 'WEBSHOP') await this._saveOrder(session);
+    if (updateResult.count === 0 && !existing) {
+      log.warn(`Verify skipped payment status update for session ${sessionId}`);
     }
+
+    await this._runPostPaymentActions(payment.type, session);
 
     const wallet = await prisma.wallet.findUnique({ where: { userId } });
     return {

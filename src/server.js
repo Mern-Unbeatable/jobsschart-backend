@@ -45,9 +45,9 @@ export class Server {
   configure() {
     if (this.isConfigured) return;
     this.securityMiddleware(this.app);
+    this.webhookRawBody(this.app);
     this.standardMiddleware(this.app);
     this.geoRedirectMiddleware(this.app);
-    this.webhookRawBody(this.app);
     this.staticFileMiddleware(this.app);
     this.routesMiddleware(this.app);
     this.apiMonitoring(this.app);
