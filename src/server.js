@@ -20,7 +20,6 @@ import { Logger } from './config/logger.js';
 import { CustomError } from './shared/globals/helpers/error-handler.js';
 import { initSocket } from './socket/index.js';
 
-// Get __dirname equivalent in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
