@@ -143,8 +143,7 @@ class PaymentController {
   });
 
   handleWebhook = catchAsync(async (req, res) => {
-    const signature = req.headers['stripe-signature'];
-    const result = await paymentService.handleWebhook(req.body, signature);
+    const result = await paymentService.handleWebhook(req.body);
     res.json(result);
   });
 

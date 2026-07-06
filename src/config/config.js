@@ -29,42 +29,9 @@ class Config {
   SMTP_PASS = env.SMTP_PASS;
   SMTP_FROM = env.SMTP_FROM || env.SMTP_USER;
 
-  // Legacy SMTP
-  SENDER_EMAIL = env.SENDER_EMAIL;
-  SENDER_EMAIL_PASSWORD = env.SENDER_EMAIL_PASSWORD;
-
-  // SendGrid
-  SENDGRID_API_KEY = env.SENDGRID_API_KEY;
-  SENDGRID_SENDER = env.SENDGRID_SENDER;
-
-  // Cloudinary
-  CLOUD_NAME = env.CLOUD_NAME;
-  CLOUD_API_KEY = env.CLOUD_API_KEY;
-  CLOUD_API_SECRET = env.CLOUD_API_SECRET;
-  HAS_CLOUDINARY = !!(env.CLOUD_NAME && env.CLOUD_API_KEY && env.CLOUD_API_SECRET);
-
-  // Stripe
-  STRIPE_SECRET_KEY = env.STRIPE_SECRET_KEY;
-  STRIPE_WEBHOOK_SECRET = env.STRIPE_WEBHOOK_SECRET;
-
   // Admin
   ADMIN_EMAIL = env.ADMIN_EMAIL;
   ADMIN_PASSWORD = env.ADMIN_PASSWORD;
-
-  // OpenAI
-  OPENAI_API_KEY = env.OPENAI_API_KEY;
-  HAS_OPENAI = !!env.OPENAI_API_KEY;
-
-  // Google OAuth
-  GOOGLE_CLIENT_ID = env.GOOGLE_CLIENT_ID;
-  GOOGLE_CLIENT_SECRET = env.GOOGLE_CLIENT_SECRET;
-  GOOGLE_CALLBACK_URL = env.GOOGLE_CALLBACK_URL;
-  HAS_GOOGLE_AUTH = !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
-
-  // Puppeteer/Chrome
-  PUPPETEER_EXECUTABLE_PATH = env.PUPPETEER_EXECUTABLE_PATH;
-  CHROME_BIN = env.CHROME_BIN;
-  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
 
   // ============================================
   // TWILIO (for video calls, SMS, etc.)
@@ -76,22 +43,19 @@ class Config {
   TWILIO_VIDEO_SERVICE_SID = env.TWILIO_VIDEO_SERVICE_SID;
   HAS_TWILIO = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
 
+  // Mollie
+  MOLLIE_API_KEY = env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST;
+  MOLLIE_WEBHOOK_URL = env.MOLLIE_WEBHOOK_URL || env.webhookurl || null;
+  MOLLIE_WEBHOOK_SECRET = env.MOLLIE_WEBHOOK_SECRET || env.webhooksecrte || null;
+  HAS_MOLLIE = !!(env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST);
+
   logger;
   cloudinary;
 
   constructor() {
     this.logger = new Logger('Config');
 
-    // Initialize Cloudinary if configured
-    if (this.HAS_CLOUDINARY) {
-      this.cloudinary = new CloudinaryService(
-        this.CLOUD_NAME,
-        this.CLOUD_API_KEY,
-        this.CLOUD_API_SECRET,
-      );
-    } else {
-      this.logger.warn('Cloudinary not configured. File uploads will use local storage.');
-    }
+
   }
 
   initialize() {
@@ -108,12 +72,8 @@ class Config {
         port: this.PORT,
         backendUrl: this.BACKEND_URL,
         frontendUrl: this.FRONTEND_URL,
-        hasCloudinary: this.HAS_CLOUDINARY,
-        hasOpenAI: this.HAS_OPENAI,
-        hasGoogleAuth: this.HAS_GOOGLE_AUTH,
-        hasStripe: !!this.STRIPE_SECRET_KEY,
-        hasEmailService: !!(this.SMTP_HOST || this.SENDGRID_API_KEY || this.SENDER_EMAIL),
-        hasTwilio: this.HAS_TWILIO, // Add Twilio status
+        hasTwilio: this.HAS_TWILIO,
+        hasMollie: this.HAS_MOLLIE,
       });
     } catch (error) {
       this.logger.error('Failed to initialize config', error);
