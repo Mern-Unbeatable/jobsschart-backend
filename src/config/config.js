@@ -44,10 +44,11 @@ class Config {
   HAS_TWILIO = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
 
   // Mollie
-  MOLLIE_API_KEY = env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST;
+  MOLLIE_API_KEY = env.MOLLIE_API_KEY || env.MOLLIE_API_KEY_TEST || env.MOLLIE_API_KEY_LIVE;
+  MOLLIE_MODE = env.MOLLIE_API_KEY ? (env.MOLLIE_API_KEY.startsWith('test_') ? 'test' : 'live') : (env.MOLLIE_API_KEY_TEST ? 'test' : (env.MOLLIE_API_KEY_LIVE ? 'live' : 'none'));
   MOLLIE_WEBHOOK_URL = env.MOLLIE_WEBHOOK_URL || env.webhookurl || null;
   MOLLIE_WEBHOOK_SECRET = env.MOLLIE_WEBHOOK_SECRET || env.webhooksecrte || null;
-  HAS_MOLLIE = !!(env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST);
+  HAS_MOLLIE = !!(env.MOLLIE_API_KEY || env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST);
 
   logger;
   cloudinary;
@@ -74,6 +75,7 @@ class Config {
         frontendUrl: this.FRONTEND_URL,
         hasTwilio: this.HAS_TWILIO,
         hasMollie: this.HAS_MOLLIE,
+        mollieMode: this.MOLLIE_MODE,
       });
     } catch (error) {
       this.logger.error('Failed to initialize config', error);

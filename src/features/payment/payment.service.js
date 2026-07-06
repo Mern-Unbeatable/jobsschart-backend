@@ -17,6 +17,13 @@ class PaymentService {
     }
   }
 
+  _mollieMode() {
+    if (typeof config.MOLLIE_API_KEY !== 'string') return 'none';
+    if (config.MOLLIE_API_KEY.startsWith('test_')) return 'test';
+    if (config.MOLLIE_API_KEY.startsWith('live_')) return 'live';
+    return 'unknown';
+  }
+
   _mollieHeaders() {
     return {
       Authorization: `Bearer ${config.MOLLIE_API_KEY}`,
@@ -77,34 +84,46 @@ class PaymentService {
   async _createMolliePayment({ amount, description, redirectUrl, webhookUrl, metadata }) {
     this._assertMollieConfigured();
 
-    const response = await axios.post(
-      `${MOLLIE_API_BASE}/payments`,
-      {
-        amount: {
-          currency: 'CHF',
-          value: this._toMollieAmount(amount),
+    try {
+      const response = await axios.post(
+        `${MOLLIE_API_BASE}/payments`,
+        {
+          amount: {
+            currency: 'CHF',
+            value: this._toMollieAmount(amount),
+          },
+          description,
+          redirectUrl,
+          webhookUrl,
+          metadata,
         },
-        description,
-        redirectUrl,
-        webhookUrl,
-        metadata,
-      },
-      {
-        headers: this._mollieHeaders(),
-      },
-    );
+        {
+          headers: this._mollieHeaders(),
+        },
+      );
 
-    return response.data;
+      return response.data;
+    } catch (error) {
+      const mollieMessage = error?.response?.data?.detail || error?.response?.data?.title || error.message;
+      log.error(`Mollie create payment failed [mode=${this._mollieMode()}]: ${mollieMessage}`);
+      throw new BadRequestError(`Mollie payment create failed: ${mollieMessage}`);
+    }
   }
 
   async _getMolliePayment(paymentId) {
     this._assertMollieConfigured();
 
-    const response = await axios.get(`${MOLLIE_API_BASE}/payments/${paymentId}`, {
-      headers: this._mollieHeaders(),
-    });
+    try {
+      const response = await axios.get(`${MOLLIE_API_BASE}/payments/${paymentId}`, {
+        headers: this._mollieHeaders(),
+      });
 
-    return response.data;
+      return response.data;
+    } catch (error) {
+      const mollieMessage = error?.response?.data?.detail || error?.response?.data?.title || error.message;
+      log.error(`Mollie get payment failed [mode=${this._mollieMode()}] paymentId=${paymentId}: ${mollieMessage}`);
+      throw new BadRequestError(`Mollie payment lookup failed: ${mollieMessage}`);
+    }
   }
 
   _isMolliePaid(payment) {
@@ -334,6 +353,8 @@ class PaymentService {
       webhookUrl,
       metadata,
     });
+
+    log.info(`Mollie payment mode=${this._mollieMode()} id=${molliePayment.id}`);
 
     const checkoutUrl = molliePayment?._links?.checkout?.href;
     if (!checkoutUrl) {

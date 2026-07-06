@@ -66,6 +66,7 @@ const schema = z
     TWILIO_VIDEO_SERVICE_SID: z.string().optional(),
 
     // Mollie
+    MOLLIE_API_KEY: z.string().optional(),
     MOLLIE_API_KEY_LIVE: z.string().optional(),
     MOLLIE_API_KEY_TEST: z.string().optional(),
     MOLLIE_WEBHOOK_URL: z.string().url().optional(),
@@ -99,7 +100,7 @@ const schema = z
         logger.warn(' Twilio not fully configured. Video/SMS features may not work.');
       }
 
-      const hasMollie = data.MOLLIE_API_KEY_LIVE || data.MOLLIE_API_KEY_TEST;
+      const hasMollie = data.MOLLIE_API_KEY || data.MOLLIE_API_KEY_LIVE || data.MOLLIE_API_KEY_TEST;
       if (!hasMollie) {
         logger.warn(' Mollie API key is missing. Payment checkout will not work.');
       }
