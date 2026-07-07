@@ -1,123 +1,230 @@
-
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ConflictError } from '../../shared/globals/helpers/error-handler.js';
-import PrismaQueryBuilder from '../../shared/globals/helpers/query-builder.js';
 import { generateSlug, makeSlugUnique } from '../../shared/utils/slug-utils.js';
 
 const log = new Logger('BlogService');
 
 class BlogService {
 
-   async getPublishedBlogs(queryParams = {}) {
-    const {
-        page = 1,
-        limit = 20,
-        sortBy = 'createdAt',
-        sortOrder = 'desc',
-        categoryId,
-        category, 
-        userId,
-        search,
-        isFeatured, 
-        tag,       
-    } = queryParams;
+    // Get published blogs for public view
+    async getPublishedBlogs(queryParams = {}) {
+        const {
+            page = 1,
+            limit = 20,
+            sortBy = 'createdAt',
+            sortOrder = 'desc',
+            categoryId,
+            category,
+            userId,
+            search,
+            isFeatured,
+            tag,
+        } = queryParams;
 
-  
-    const where = {
-        status: 'PUBLISHED',
-    };
+        const where = {
+            status: 'PUBLISHED', // Only show published blogs
+        };
 
-    // Filter by category ID
-    if (categoryId) {
-        where.categoryId = categoryId;
-    }
+        // Filter by category ID
+        if (categoryId) {
+            where.categoryId = categoryId;
+        }
 
-    // Filter by category name
-    if (category) {
-        where.category = {
-            name: { contains: category, mode: 'insensitive' }
+        // Filter by category name
+        if (category) {
+            where.category = {
+                name: { contains: category, mode: 'insensitive' }
+            };
+        }
+
+        // Filter by user ID
+        if (userId) {
+            where.userId = userId;
+        }
+
+        // Filter by featured status
+        if (isFeatured !== undefined) {
+            where.isFeatured = isFeatured === 'true';
+        }
+
+        // Filter by tag
+        if (tag) {
+            where.tags = { has: tag };
+        }
+
+        // Handle search
+        if (search) {
+            const searchTerm = search.trim();
+            where.OR = [
+                { title: { contains: searchTerm, mode: 'insensitive' } },
+                { content: { contains: searchTerm, mode: 'insensitive' } },
+                { excerpt: { contains: searchTerm, mode: 'insensitive' } },
+                { slug: { contains: searchTerm.replace(/\s+/g, '-'), mode: 'insensitive' } }
+            ];
+        }
+
+        // Handle pagination
+        const pageNumber = Math.max(parseInt(page) || 1, 1);
+        const take = Math.min(parseInt(limit) || 20, 100);
+        const skip = (pageNumber - 1) * take;
+
+        // Handle sorting
+        const orderBy = [];
+        const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'title', 'readTime'];
+        if (validSortFields.includes(sortBy)) {
+            orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
+        } else {
+            orderBy.push({ publishedAt: 'desc' });
+        }
+
+        // Execute query
+        const [blogs, total] = await Promise.all([
+            prisma.blog.findMany({
+                where,
+                orderBy,
+                skip,
+                take,
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                            bio: true,
+                        }
+                    },
+                    category: {
+                        select: {
+                            id: true,
+                            name: true,
+                        }
+                    }
+                }
+            }),
+            prisma.blog.count({ where })
+        ]);
+
+        return {
+            meta: {
+                page: pageNumber,
+                limit: take,
+                total,
+                totalPages: Math.ceil(total / take)
+            },
+            blogs: blogs,
         };
     }
 
-    // Filter by user ID
-    if (userId) {
-        where.userId = userId;
-    }
+    // Get all blogs for admin (including drafts)
+    async getBlogsForAdmin(queryParams = {}) {
+        const {
+            page = 1,
+            limit = 20,
+            sortBy = 'createdAt',
+            sortOrder = 'desc',
+            categoryId,
+            category,
+            userId,
+            search,
+            isFeatured,
+            tag,
+            status, // Status filter for admin
+        } = queryParams;
 
-    // Filter by featured status
-    if (isFeatured !== undefined) {
-        where.isFeatured = isFeatured === 'true';
-    }
+        const where = {};
 
-    // Filter by tag
-    if (tag) {
-        where.tags = { has: tag };
-    }
+        // Filter by status (DRAFT, PUBLISHED, ARCHIVED)
+        if (status) {
+            if (['DRAFT', 'PUBLISHED', 'ARCHIVED'].includes(status)) {
+                where.status = status;
+            }
+        }
 
-    // Handle search
-    if (search) {
-        const searchTerm = search.trim();
-        where.OR = [
-            { title: { contains: searchTerm, mode: 'insensitive' } },
-            { content: { contains: searchTerm, mode: 'insensitive' } },
-            { excerpt: { contains: searchTerm, mode: 'insensitive' } },
-            { slug: { contains: searchTerm.replace(/\s+/g, '-'), mode: 'insensitive' } }
-        ];
-    }
+        if (categoryId) {
+            where.categoryId = categoryId;
+        }
 
-    // Handle pagination
-    const take = Math.min(parseInt(limit) || 20, 100);
-    const skip = (parseInt(page) - 1) * take;
+        if (category) {
+            where.category = {
+                name: { contains: category, mode: 'insensitive' }
+            };
+        }
 
-    // Handle sorting
-    const orderBy = [];
-    const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'title', 'readTime'];
-    if (validSortFields.includes(sortBy)) {
-        orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
-    } else {
-        orderBy.push({ publishedAt: 'desc' });
-    }
+        if (userId) {
+            where.userId = userId;
+        }
 
-    // Execute query
-    const [blogs, total] = await Promise.all([
-        prisma.blog.findMany({
-            where,
-            orderBy,
-            skip,
-            take,
-            include: {
-                user: {
-                    select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        avatar: true,
-                        bio: true,
-                    }
-                },
-                category: {
-                    select: {
-                        id: true,
-                        name: true,
+        if (isFeatured !== undefined) {
+            where.isFeatured = isFeatured === 'true' || isFeatured === true;
+        }
+
+        if (tag) {
+            where.tags = { has: tag };
+        }
+
+        if (search) {
+            const searchTerm = search.trim();
+            where.OR = [
+                { title: { contains: searchTerm, mode: 'insensitive' } },
+                { content: { contains: searchTerm, mode: 'insensitive' } },
+                { excerpt: { contains: searchTerm, mode: 'insensitive' } },
+                { slug: { contains: searchTerm.replace(/\s+/g, '-'), mode: 'insensitive' } }
+            ];
+        }
+
+        const pageNumber = Math.max(parseInt(page) || 1, 1);
+        const take = Math.min(parseInt(limit) || 20, 100);
+        const skip = (pageNumber - 1) * take;
+
+        const orderBy = [];
+        const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'title', 'readTime', 'status'];
+        if (validSortFields.includes(sortBy)) {
+            orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
+        } else {
+            orderBy.push({ updatedAt: 'desc' });
+        }
+
+        const [blogs, total] = await Promise.all([
+            prisma.blog.findMany({
+                where,
+                orderBy,
+                skip,
+                take,
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            avatar: true,
+                            bio: true,
+                        }
+                    },
+                    category: {
+                        select: {
+                            id: true,
+                            name: true,
+                        }
                     }
                 }
-            }
-        }),
-        prisma.blog.count({ where })
-    ]);
+            }),
+            prisma.blog.count({ where })
+        ]);
 
+        return {
+            meta: {
+                page: pageNumber,
+                limit: take,
+                total,
+                totalPages: Math.ceil(total / take)
+            },
+            blogs,
+        };
+    }
 
-    return {
-        meta: {
-            page: parseInt(page),
-            limit: take,
-            total,
-            totalPages: Math.ceil(total / take)
-        },
-        blogs: blogs,
-    };
-}
+    // Get blog by slug for public (only published)
     async getBlogBySlug(slug, shouldIncrementViews = true) {
         let blog = await prisma.blog.findUnique({
             where: { slug },
@@ -144,11 +251,12 @@ class BlogService {
             throw new NotFoundError('Blog not found');
         }
 
+        // Only allow access to published blogs
         if (blog.status !== 'PUBLISHED') {
             throw new NotFoundError('Blog not found');
         }
 
-        // Increment views if the field exists
+        // Increment views
         if (shouldIncrementViews) {
             try {
                 await prisma.blog.update({
@@ -156,18 +264,49 @@ class BlogService {
                     data: { views: { increment: 1 } },
                 });
 
-
                 blog = {
                     ...blog,
                     views: (blog.views || 0) + 1
                 };
             } catch (error) {
-                console.log('Views increment failed (field might not exist):', error.message);
+                console.log('Views increment failed:', error.message);
             }
         }
 
         return blog;
     }
+
+    // Get blog by slug for admin (can see all statuses)
+    async getBlogBySlugForAdmin(slug) {
+        const blog = await prisma.blog.findUnique({
+            where: { slug },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        avatar: true,
+                        bio: true
+                    }
+                },
+                category: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                },
+            },
+        });
+
+        if (!blog) {
+            throw new NotFoundError('Blog not found');
+        }
+
+        return blog;
+    }
+
+    // Create a new blog
     async createBlog(data) {
         console.log('blog data check this ', data);
 
@@ -193,23 +332,27 @@ class BlogService {
             if (!category) throw new NotFoundError('Blog category not found');
         }
 
+        // Determine if blog should be published
+        const status = data.status || 'DRAFT';
+        const publishedAt = status === 'PUBLISHED' ? new Date() : null;
+
         // Create blog with all fields
         const blog = await prisma.blog.create({
             data: {
                 title: data.title,
                 slug,
-                content: data.content,
+                content: data.content || '',
                 excerpt: data.excerpt || null,
                 tags: data.tags || [],
                 metaTitle: data.metaTitle || null,
                 metaDescription: data.metaDescription || null,
                 isFeatured: data.isFeatured || false,
-                status: data.status || 'DRAFT',
+                status: status,
                 image: data.image || null,
                 readTime: readTime,
                 categoryId: data.categoryId || null,
-                publishedAt: data.status === 'PUBLISHED' ? new Date() : null,
-                userId: data.authorId,
+                publishedAt: publishedAt,
+                userId: data.authorId || null,
             },
             include: {
                 category: true,
@@ -223,9 +366,11 @@ class BlogService {
             },
         });
 
-        log.info(`Blog created: ${blog.id} — "${blog.title}"`);
+        log.info(`Blog created: ${blog.id} — "${blog.title}" (Status: ${blog.status})`);
         return { blog };
     }
+
+    // Update an existing blog
     async updateBlog(id, data) {
         const blog = await prisma.blog.findUnique({
             where: { id },
@@ -259,19 +404,36 @@ class BlogService {
             updateData.readTime = Math.max(1, Math.ceil(wordCount / wordsPerMinute));
         }
 
-        // Handle publish status
-        let publishedAt = blog.publishedAt;
-        if (data.status === 'PUBLISHED' && blog.status !== 'PUBLISHED') {
-            publishedAt = new Date();
-            updateData.publishedAt = publishedAt;
-        } else if (data.status === 'DRAFT' && blog.status === 'PUBLISHED') {
-            updateData.publishedAt = null;
+        // Update basic fields
+        if (data.title !== undefined) updateData.title = data.title;
+        if (data.content !== undefined) updateData.content = data.content;
+        if (data.excerpt !== undefined) updateData.excerpt = data.excerpt;
+        if (data.tags !== undefined) updateData.tags = data.tags;
+        if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
+        if (data.metaDescription !== undefined) updateData.metaDescription = data.metaDescription;
+        if (data.isFeatured !== undefined) updateData.isFeatured = data.isFeatured;
+        if (data.image !== undefined) updateData.image = data.image;
+
+        // Handle status changes and publishedAt
+        if (data.status !== undefined) {
+            // Changing status to PUBLISHED
+            if (data.status === 'PUBLISHED' && blog.status !== 'PUBLISHED') {
+                updateData.publishedAt = new Date();
+            }
+            // Changing status from PUBLISHED to something else
+            else if (data.status !== 'PUBLISHED' && blog.status === 'PUBLISHED') {
+                updateData.publishedAt = null;
+            }
+            // If status is being updated to the same value, don't change publishedAt
+            else if (data.status === blog.status) {
+                // Keep existing publishedAt
+                updateData.publishedAt = blog.publishedAt;
+            }
+
+            updateData.status = data.status;
         }
 
-        // Update only fields that exist in your schema
-        if (data.image !== undefined) updateData.image = data.image;
-        if (data.featuredImage !== undefined) updateData.image = data.featuredImage;
-        if (data.status !== undefined) updateData.status = data.status;
+        // Handle category update
         if (data.categoryId !== undefined) {
             if (data.categoryId) {
                 const category = await prisma.blogCategory.findUnique({
@@ -282,14 +444,7 @@ class BlogService {
             updateData.categoryId = data.categoryId || null;
         }
 
-        // Validate category if it exists in updateData
-        if (updateData.categoryId) {
-            const category = await prisma.blogCategory.findUnique({
-                where: { id: updateData.categoryId },
-            });
-            if (!category) throw new NotFoundError('Blog category not found');
-        }
-
+        // Update the blog
         const updated = await prisma.blog.update({
             where: { id },
             data: updateData,
@@ -305,20 +460,11 @@ class BlogService {
             },
         });
 
-        log.info(`Blog updated: ${id}`);
-        return {
-            ...updated,
-            title: data.title || blog.title,
-            content: data.content,
-            excerpt: data.excerpt,
-            tags: data.tags,
-            metaTitle: data.metaTitle,
-            metaDescription: data.metaDescription,
-            isFeatured: data.isFeatured,
-            featuredImage: updated.image
-        };
+        log.info(`Blog updated: ${id} — Status: ${updated.status}`);
+        return updated;
     }
 
+    // Delete a blog
     async deleteBlog(id) {
         const blog = await prisma.blog.findUnique({ where: { id } });
         if (!blog) throw new NotFoundError('Blog not found');
@@ -326,6 +472,22 @@ class BlogService {
         await prisma.blog.delete({ where: { id } });
         log.info(`Blog deleted: ${id} — "${blog.title}"`);
         return { success: true, message: 'Blog deleted successfully' };
+    }
+
+    // Additional utility methods for working with drafts
+    async getDraftBlogs(adminId) {
+        return await this.getBlogsForAdmin({
+            status: 'DRAFT',
+            userId: adminId
+        });
+    }
+
+    async publishBlog(id) {
+        return await this.updateBlog(id, { status: 'PUBLISHED' });
+    }
+
+    async unpublishBlog(id) {
+        return await this.updateBlog(id, { status: 'DRAFT' });
     }
 
 
