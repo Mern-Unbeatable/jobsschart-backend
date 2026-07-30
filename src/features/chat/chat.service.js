@@ -9,7 +9,10 @@ const log = new Logger('ChatService');
 
 const PRICE_PER_MINUTE = 2.50;
 const CONSULTANT_SHARE_RATE = 0.5;
-const PLATFORM_SHARE_RATE   = 0.5; 
+const PLATFORM_SHARE_RATE   = 0.5;
+
+/** Prevent double-billing when two end requests arrive at once (no ENDING enum in DB) */
+const endingSessionLocks = new Set();
 
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -20,29 +23,137 @@ const transporter = nodemailer.createTransport({
 
 class ChatService {
 
-    async getOrCreateConversation(userId, otherUserId) {
-        const otherUser = await prisma.user.findUnique({
+  async _resolveOtherUser(otherUserId) {
+        let otherUser = await prisma.user.findUnique({
             where: { id: otherUserId },
             select: { id: true, name: true, avatar: true, role: true },
         });
-        if (!otherUser) throw new NotFoundError('User not found');
 
-        let conversation = await prisma.chatConversation.findFirst({
+        if (!otherUser) {
+            const consultant = await prisma.consultant.findUnique({
+                where: { id: otherUserId },
+                include: { user: { select: { id: true, name: true, avatar: true, role: true } } },
+            });
+            if (consultant?.user) otherUser = consultant.user;
+        }
+
+        if (!otherUser) {
+            const consultantByUser = await prisma.consultant.findUnique({
+                where: { userId: otherUserId },
+                include: { user: { select: { id: true, name: true, avatar: true, role: true } } },
+            });
+            if (consultantByUser?.user) otherUser = consultantByUser.user;
+        }
+
+        return otherUser;
+    }
+
+    _isPairConversation(conv, userId, otherUserId) {
+        if (!conv?.participants || conv.participants.length !== 2) return false;
+        const ids = new Set(conv.participants.map((p) => p.userId));
+        return ids.size === 2 && ids.has(userId) && ids.has(otherUserId);
+    }
+
+    _pickPrimaryConversation(matches) {
+        const rank = (c) => {
+            const statusRank = c.sessionStatus === 'ACTIVE' ? 3 : c.sessionStatus === 'PENDING' ? 2 : 1;
+            const msgCount = c._count?.messages ?? 0;
+            const updated = new Date(c.updatedAt).getTime();
+            return [statusRank, msgCount, updated];
+        };
+        return [...matches].sort((a, b) => {
+            const ra = rank(a);
+            const rb = rank(b);
+            for (let i = 0; i < 3; i++) {
+                if (rb[i] !== ra[i]) return rb[i] - ra[i];
+            }
+            return 0;
+        })[0];
+    }
+
+    async _findConversationsBetween(userId, otherUserId, tx = prisma) {
+        const candidates = await tx.chatConversation.findMany({
             where: {
                 AND: [
                     { participants: { some: { userId } } },
                     { participants: { some: { userId: otherUserId } } },
                 ],
             },
-            include: this._conversationInclude(userId),
+            include: {
+                participants: true,
+                _count: { select: { messages: true } },
+            },
+            orderBy: { updatedAt: 'desc' },
+        });
+        return candidates.filter((c) => this._isPairConversation(c, userId, otherUserId));
+    }
+
+    async _mergeConversations(primaryId, duplicateIds, tx = prisma) {
+        const dupIds = duplicateIds.filter((id) => id && id !== primaryId);
+        if (!dupIds.length) return;
+
+        for (const dupId of dupIds) {
+            await tx.chatMessage.updateMany({
+                where: { conversationId: dupId },
+                data: { conversationId: primaryId },
+            });
+
+            await tx.chatBilling.updateMany({
+                where: { conversationId: dupId },
+                data: { conversationId: primaryId },
+            });
+
+            const dupSession = await tx.session.findUnique({ where: { chatConversationId: dupId } });
+            const primarySession = await tx.session.findUnique({ where: { chatConversationId: primaryId } });
+            if (dupSession && !primarySession) {
+                await tx.session.update({
+                    where: { id: dupSession.id },
+                    data: { chatConversationId: primaryId },
+                });
+            } else if (dupSession && primarySession) {
+                await tx.session.update({
+                    where: { id: dupSession.id },
+                    data: { chatConversationId: null },
+                });
+            }
+
+            await tx.chatParticipant.deleteMany({ where: { conversationId: dupId } });
+            await tx.chatConversation.delete({ where: { id: dupId } });
+        }
+
+        await tx.chatConversation.update({
+            where: { id: primaryId },
+            data: { updatedAt: new Date() },
         });
 
-        if (!conversation) {
-            conversation = await prisma.chatConversation.create({
+        log.info(`Merged ${dupIds.length} duplicate conversation(s) into ${primaryId}`);
+    }
+
+    async getOrCreateConversation(userId, otherUserId) {
+        const otherUser = await this._resolveOtherUser(otherUserId);
+        if (!otherUser) throw new NotFoundError('Chat recipient not found. Use the consultant user id, not the consultant profile id.');
+        otherUserId = otherUser.id;
+
+        const conversation = await prisma.$transaction(async (tx) => {
+            const matches = await this._findConversationsBetween(userId, otherUserId, tx);
+
+            if (matches.length > 0) {
+                const primary = this._pickPrimaryConversation(matches);
+                const duplicateIds = matches.filter((m) => m.id !== primary.id).map((m) => m.id);
+                if (duplicateIds.length) {
+                    await this._mergeConversations(primary.id, duplicateIds, tx);
+                }
+                return tx.chatConversation.findUnique({
+                    where: { id: primary.id },
+                    include: this._conversationInclude(userId),
+                });
+            }
+
+            return tx.chatConversation.create({
                 data: { participants: { create: [{ userId }, { userId: otherUserId }] } },
                 include: this._conversationInclude(userId),
             });
-        }
+        });
 
         return this._formatConversation(conversation, userId);
     }
@@ -50,10 +161,53 @@ class ChatService {
     async getUserConversations(userId) {
         const conversations = await prisma.chatConversation.findMany({
             where: { participants: { some: { userId } } },
-            include: this._conversationInclude(userId),
+            include: {
+                participants: { include: { user: { select: { id: true, name: true, avatar: true, role: true } } } },
+                messages: {
+                    orderBy: { createdAt: 'desc' },
+                    take: 1,
+                    include: { sender: { select: { id: true, name: true, avatar: true } } },
+                },
+                _count: { select: { messages: true } },
+            },
             orderBy: { updatedAt: 'desc' },
         });
-        return Promise.all(conversations.map(c => this._formatConversation(c, userId)));
+
+        const groups = new Map();
+        const orphans = [];
+
+        for (const conv of conversations) {
+            const otherParticipant = conv.participants.find((p) => p.userId !== userId);
+            const otherId = otherParticipant?.userId;
+            if (!otherId) {
+                orphans.push(conv);
+                continue;
+            }
+            if (!groups.has(otherId)) groups.set(otherId, []);
+            groups.get(otherId).push(conv);
+        }
+
+        const kept = [];
+        for (const [, group] of groups) {
+            if (group.length > 1) {
+                const primary = this._pickPrimaryConversation(group);
+                const duplicateIds = group.filter((c) => c.id !== primary.id).map((c) => c.id);
+                try {
+                    await this._mergeConversations(primary.id, duplicateIds);
+                } catch (err) {
+                    log.warn(`Auto-merge failed: ${err.message}`);
+                }
+                kept.push(primary);
+            } else {
+                kept.push(group[0]);
+            }
+        }
+
+        const all = [...kept, ...orphans].sort(
+            (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
+        );
+
+        return Promise.all(all.map((c) => this._formatConversation(c, userId)));
     }
 
     async getMessages(conversationId, userId, page = 1, limit = 50) {
@@ -61,6 +215,21 @@ class ChatService {
             where: { conversationId, userId },
         });
         if (!participant) throw new ForbiddenError('Not a participant');
+
+        const conv = await prisma.chatConversation.findUnique({
+            where: { id: conversationId },
+            select: { sessionStatus: true, endedAt: true },
+        });
+        if (!conv) throw new NotFoundError('Conversation not found');
+
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { role: true },
+        });
+        const isConsultant = user?.role === 'CONSULTANT' || user?.role === 'ADMIN';
+        if (isConsultant && (conv.sessionStatus === 'ENDED' || conv.endedAt)) {
+            throw new ForbiddenError('Consultants cannot access chat history after a session has ended');
+        }
 
         const skip = (page - 1) * limit;
         const [messages, total] = await Promise.all([
@@ -92,7 +261,20 @@ class ChatService {
         });
 
         if (conv?.sessionStatus !== 'ACTIVE') {
-            throw new BadRequestError('No active session. Please start a paid session to send messages.');
+            const senderUser = await prisma.user.findUnique({
+                where: { id: senderId },
+                select: { role: true },
+            });
+            const isConsultant = senderUser?.role === 'CONSULTANT' || senderUser?.role === 'ADMIN';
+            if (conv?.sessionStatus === 'PENDING' && !isConsultant) {
+                // Allow customer to send while waiting for consultant acceptance
+            } else {
+                throw new BadRequestError(
+                    conv?.sessionStatus === 'PENDING'
+                        ? 'Please accept the chat request before replying.'
+                        : 'No active session. Please start a paid session to send messages.'
+                );
+            }
         }
 
         const senderUser = await prisma.user.findUnique({
@@ -119,18 +301,8 @@ class ChatService {
         });
 
         try {
-            const { getIO } = await import('../../socket/index.js');
-            const io = getIO();
-            io.to(`conv_${conversationId}`).emit('new_message', { conversationId, message: newMessage });
-            const participants = await prisma.chatParticipant.findMany({
-                where: { conversationId },
-                select: { userId: true },
-            });
-            for (const p of participants) {
-                if (p.userId !== senderId) {
-                    io.to(`user_${p.userId}`).emit('new_message', { conversationId, message: newMessage });
-                }
-            }
+            const { broadcastNewMessage } = await import('../../socket/index.js');
+            await broadcastNewMessage(conversationId, newMessage, senderId);
         } catch (socketErr) {
             log.warn(`Socket broadcast skipped: ${socketErr.message}`);
         }
@@ -151,6 +323,7 @@ class ChatService {
         });
         if (!conv) throw new NotFoundError('Conversation not found');
         if (conv.sessionStatus === 'ACTIVE') throw new BadRequestError('Session already active');
+        if (conv.sessionStatus === 'PENDING') throw new BadRequestError('Chat request already pending consultant acceptance');
 
         const userParticipant = conv.participants.find(p => p.user.role === 'USER');
         const consultantParticipant = conv.participants.find(p => p.user.role !== 'USER');
@@ -171,9 +344,9 @@ class ChatService {
             where: { id: conversationId },
             data: {
                 sessionType,
-                sessionStatus: 'ACTIVE',
+                sessionStatus: 'PENDING',
                 billingUserId,
-                startedAt: new Date(),
+                startedAt: null,
                 endedAt: null,
                 totalMinutes: 0,
                 totalCost: 0,
@@ -183,10 +356,120 @@ class ChatService {
         await this._postSystemMessage(
             conversationId,
             billingUserId,
-            `${sessionType} session started · Rate: €${PRICE_PER_MINUTE}/min · 50/50 split`
+            `Chat request sent · Waiting for consultant to accept · Rate: €${PRICE_PER_MINUTE}/min`
+        );
+
+        return {
+            ...updated,
+            consultantUserId: consultantParticipant.userId,
+            customerName: userParticipant.user.name,
+            customerId: userParticipant.userId,
+        };
+    }
+
+    async acceptSession(conversationId, consultantUserId) {
+        const conv = await prisma.chatConversation.findUnique({
+            where: { id: conversationId },
+            include: {
+                participants: {
+                    include: { user: { select: { id: true, role: true, name: true } } },
+                },
+            },
+        });
+        if (!conv) throw new NotFoundError('Conversation not found');
+        if (conv.sessionStatus !== 'PENDING') throw new BadRequestError('No pending chat request to accept');
+
+        const consultantParticipant = conv.participants.find(p => p.userId === consultantUserId);
+        if (!consultantParticipant) throw new ForbiddenError('Only the consultant can accept this chat request');
+
+        const updated = await prisma.chatConversation.update({
+            where: { id: conversationId },
+            data: {
+                sessionStatus: 'ACTIVE',
+                startedAt: new Date(),
+            },
+        });
+
+        await this._postSystemMessage(
+            conversationId,
+            consultantUserId,
+            `${conv.sessionType} session accepted · Billing started · €${PRICE_PER_MINUTE}/min`
         );
 
         return updated;
+    }
+
+    async declineSession(conversationId, consultantUserId) {
+        const conv = await prisma.chatConversation.findUnique({
+            where: { id: conversationId },
+            include: { participants: true },
+        });
+        if (!conv) throw new NotFoundError('Conversation not found');
+        if (conv.sessionStatus !== 'PENDING') throw new BadRequestError('No pending chat request to decline');
+
+        const consultantParticipant = conv.participants.find(p => p.userId === consultantUserId);
+        if (!consultantParticipant) throw new ForbiddenError('Only the consultant can decline this chat request');
+
+        const updated = await prisma.chatConversation.update({
+            where: { id: conversationId },
+            data: {
+                sessionStatus: 'IDLE',
+                billingUserId: null,
+                startedAt: null,
+                endedAt: null,
+                totalMinutes: 0,
+                totalCost: 0,
+            },
+        });
+
+        await this._postSystemMessage(
+            conversationId,
+            consultantUserId,
+            'Chat request declined by consultant'
+        );
+
+        try {
+            const { getIO } = await import('../../socket/index.js');
+            const io = getIO();
+            for (const p of conv.participants) {
+                io.to(`user_${p.userId}`).emit('chat_request_declined', { conversationId });
+            }
+        } catch (socketErr) {
+            log.warn(`chat_request_declined emit skipped: ${socketErr.message}`);
+        }
+
+        return updated;
+    }
+
+    async emailTranscript(conversationId, userId) {
+        const participant = await prisma.chatParticipant.findFirst({
+            where: { conversationId, userId },
+        });
+        if (!participant) throw new ForbiddenError('Not a participant');
+
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { role: true, email: true },
+        });
+        if (user?.role !== 'USER') {
+            throw new ForbiddenError('Only customers can request chat transcripts');
+        }
+
+        const conv = await prisma.chatConversation.findUnique({
+            where: { id: conversationId },
+            include: {
+                participants: {
+                    include: { user: { select: { id: true, name: true, email: true, role: true } } },
+                },
+            },
+        });
+        if (!conv) throw new NotFoundError('Conversation not found');
+
+        const totalMinutes = parseFloat(conv.totalMinutes || 0);
+        const totalCost = parseFloat(conv.totalCost || 0);
+        await this._sendTranscriptEmail(conv, totalMinutes, totalCost);
+
+        return { sent: true, email: user.email };
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -453,8 +736,49 @@ class ChatService {
     // ✅ FIXED: endSession — bills remaining seconds PROPORTIONALLY
     // No more Math.ceil rounding up to full minutes!
     // ─────────────────────────────────────────────────────────────
-    async endSession(conversationId, reason = 'ended') {
+    async endSession(conversationId, reason = 'ended', endTimestamp = Date.now()) {
         log.info(`🔚 endSession: ${conversationId}, reason: ${reason}`);
+
+        // Another end request is already processing — wait and return final totals
+        if (endingSessionLocks.has(conversationId)) {
+            let attempts = 0;
+            while (endingSessionLocks.has(conversationId) && attempts < 30) {
+                await new Promise((r) => setTimeout(r, 100));
+                attempts++;
+            }
+            const ended = await prisma.chatConversation.findUnique({
+                where: { id: conversationId },
+                select: {
+                    sessionStatus: true, totalMinutes: true, totalCost: true,
+                    sessionType: true, endedAt: true, startedAt: true,
+                },
+            });
+            if (!ended) return null;
+            const durationSeconds = ended.startedAt && ended.endedAt
+                ? Math.max(0, Math.round((new Date(ended.endedAt).getTime() - new Date(ended.startedAt).getTime()) / 1000))
+                : 0;
+            return {
+                totalMinutes: parseFloat(ended.totalMinutes || 0),
+                totalCost: parseFloat(ended.totalCost || 0),
+                durationSeconds,
+                endedAt: ended.endedAt || new Date(),
+                sessionId: null,
+                sessionCreated: false,
+                sessionType: ended.sessionType,
+                reason,
+                alreadyEnded: true,
+            };
+        }
+
+        endingSessionLocks.add(conversationId);
+        try {
+            return await this._finalizeEndSession(conversationId, reason, endTimestamp);
+        } finally {
+            endingSessionLocks.delete(conversationId);
+        }
+    }
+
+    async _finalizeEndSession(conversationId, reason, endTimestamp) {
 
         const conv = await prisma.chatConversation.findUnique({
             where: { id: conversationId },
@@ -481,12 +805,33 @@ class ChatService {
                 sessionCreated: false,
                 sessionType: conv.sessionType,
                 reason,
+                alreadyEnded: true,
             };
         }
 
+        // Pending request ended without billing
+        if (conv.sessionStatus === 'PENDING') {
+            await prisma.chatConversation.update({
+                where: { id: conversationId },
+                data: { sessionStatus: 'IDLE', billingUserId: null, endedAt: new Date() },
+            });
+            return {
+                totalMinutes: 0,
+                totalCost: 0,
+                endedAt: new Date(),
+                sessionId: null,
+                sessionCreated: false,
+                sessionType: conv.sessionType,
+                reason,
+                alreadyEnded: false,
+            };
+        }
+
+        const wasActive = conv.sessionStatus === 'ACTIVE';
+
         // ✅ Bill remaining seconds PROPORTIONALLY (not Math.ceil!)
-        if (conv.sessionStatus === 'ACTIVE' && conv.startedAt && conv.billingUserId) {
-            const elapsedSeconds = (Date.now() - new Date(conv.startedAt).getTime()) / 1000;
+        if (wasActive && conv.startedAt && conv.billingUserId) {
+            const elapsedSeconds = (endTimestamp - new Date(conv.startedAt).getTime()) / 1000;
             const alreadyBilledMinutes = parseFloat(conv.totalMinutes || 0);
             const alreadyBilledSeconds = alreadyBilledMinutes * 60;
             // Remaining seconds = total elapsed - already billed
@@ -514,9 +859,9 @@ class ChatService {
         const totalCost = parseFloat(finalConv?.totalCost || 0);
         const sessionType = finalConv?.sessionType || conv.sessionType;
 
-        // Calculate exact duration in seconds
+        // Calculate exact duration in seconds (frozen at end initiation — not when billing completes)
         const durationSeconds = conv.startedAt
-            ? Math.round((Date.now() - new Date(conv.startedAt).getTime()) / 1000)
+            ? Math.max(0, Math.round((endTimestamp - new Date(conv.startedAt).getTime()) / 1000))
             : 0;
 
         log.info(`✅ Final totals: ${totalMinutes.toFixed(2)} min, €${totalCost.toFixed(2)}, ${durationSeconds}s`);
@@ -571,6 +916,7 @@ class ChatService {
             sessionCreated: !!session,
             sessionType,
             reason,
+            alreadyEnded: false,
         };
     }
 
@@ -707,6 +1053,17 @@ class ChatService {
         const otherParticipant = conv.participants.find(p => p.userId !== userId);
         const lastMessage = conv.messages[0] || null;
 
+        let otherUser = otherParticipant?.user || null;
+        if (otherUser && (otherUser.role === 'CONSULTANT' || otherUser.role === 'ADMIN')) {
+            const consultant = await prisma.consultant.findUnique({
+                where: { userId: otherUser.id },
+                select: { id: true },
+            });
+            if (consultant) {
+                otherUser = { ...otherUser, consultantRecordId: consultant.id };
+            }
+        }
+
         return {
             id: conv.id,
             sessionType: conv.sessionType,
@@ -714,7 +1071,8 @@ class ChatService {
             totalMinutes: conv.totalMinutes,
             totalCost: conv.totalCost,
             startedAt: conv.startedAt,
-            otherUser: otherParticipant?.user || null,
+            otherUser,
+            consultantRecordId: otherUser?.consultantRecordId || null,
             lastMessage,
             unreadCount,
             updatedAt: conv.updatedAt,

@@ -258,8 +258,23 @@ model Consultant {
   availabilitySlots AvailabilitySlot[]
   category          String?
   topics            String?
+  bioNl             String?
+  idFrontUrl        String?
+  idBackUrl         String?
+  bsnNumber         String?
+  kvkNumber         String?
+  cityOfResidence   String?
+  businessBankAccount String?
+  verificationStatus VerificationStatus @default(UNVERIFIED)
 
   @@map("consultants")
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
 }
 
 model Schedule {
@@ -915,6 +930,7 @@ enum ChatSessionType {
 
 enum ChatSessionStatus {
   IDLE
+  PENDING
   ACTIVE
   ENDED
 }

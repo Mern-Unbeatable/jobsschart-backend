@@ -309,6 +309,33 @@ class CommunityQuestionService {
     return updatedQuestion;
   }
 
+  // Public: Get answered questions (Community → View Services)
+  async getPublicAnsweredQuestions(queryParams = {}) {
+    const page = parseInt(queryParams.page) || 1;
+    const limit = Math.min(parseInt(queryParams.limit) || 20, 50);
+    const skip = (page - 1) * limit;
+
+    const where = { status: 'ANSWERED', answer: { not: null } };
+
+    const [questions, total] = await Promise.all([
+      prisma.communityQuestion.findMany({
+        where,
+        include: {
+          user: { select: { id: true, name: true, avatar: true, role: true } },
+        },
+        orderBy: { answeredAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.communityQuestion.count({ where }),
+    ]);
+
+    return {
+      questions,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
   // Admin: Delete question
   async deleteQuestion(questionId) {
     const question = await prisma.communityQuestion.findUnique({

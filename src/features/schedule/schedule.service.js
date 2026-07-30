@@ -1,8 +1,16 @@
 // src/features/schedule/schedule.service.js (Updated - removed availability methods)
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
+import nodemailer from 'nodemailer';
 
 const log = new Logger('ScheduleService');
+
+const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+});
 
 class ScheduleService {
     constructor() {
@@ -483,6 +491,22 @@ class ScheduleService {
                         description: `Refund for cancelled booking ${bookingId}`,
                     },
                 });
+            }
+
+            if (updatedBooking.user?.email) {
+                const bookingDate = new Date(updatedBooking.startTime).toLocaleString('en-US', {
+                    dateStyle: 'full',
+                    timeStyle: 'short',
+                });
+                transporter.sendMail({
+                    from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                    to: updatedBooking.user.email,
+                    subject: 'Your appointment has been cancelled',
+                    html: `<p>Hello ${updatedBooking.user.name || 'there'},</p>
+                           <p>Your appointment with <strong>${updatedBooking.consultant?.user?.name || 'your consultant'}</strong> scheduled for <strong>${bookingDate}</strong> has been cancelled.</p>
+                           ${refundAmount > 0 ? `<p>A refund of €${Number(refundAmount).toFixed(2)} has been credited to your wallet.</p>` : ''}
+                           <p>Thank you,<br/>Illorac Team</p>`,
+                }).catch(err => log.error(`Cancel notification email failed: ${err.message}`));
             }
 
             return updatedBooking;

@@ -257,6 +257,7 @@ class PaymentService {
 
       amount = Number(donationAmount);
       if (isNaN(amount) || amount <= 0) throw new Error('Invalid donation amount');
+      if (amount < 100) throw new Error('Minimum donation amount is €100.00');
 
       let imageUrl = image;
       if (!imageUrl && donationData.image) {

@@ -113,8 +113,12 @@ export function startBillingTimer(conversationId) {
                     };
 
                     io.to(`conv_${conversationId}`).emit('session_ended', endPayload);
-                    if (conv.billingUserId) {
-                        io.to(`user_${conv.billingUserId}`).emit('session_ended', endPayload);
+                    const participants = await prisma.chatParticipant.findMany({
+                        where: { conversationId },
+                        select: { userId: true },
+                    });
+                    for (const p of participants) {
+                        io.to(`user_${p.userId}`).emit('session_ended', endPayload);
                     }
                     return;
                 }
@@ -174,12 +178,29 @@ async function restoreActiveSessions() {
 // ─────────────────────────────────────────────────────────────
 
 export const initSocket = (httpServer) => {
+    const allowedOrigins = [
+        process.env.FRONTEND_URL || 'http://localhost:5173',
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:3000',
+    ];
+
     io = new Server(httpServer, {
         cors: {
-            origin: [process.env.FRONTEND_URL || 'http://localhost:5173', 'http://localhost:3000'],
+            origin: (origin, callback) => {
+                if (!origin || allowedOrigins.includes(origin) || /localhost|127\.0\.0\.1/.test(origin)) {
+                    callback(null, true);
+                } else {
+                    callback(null, true);
+                }
+            },
             credentials: true,
             methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
         },
+        transports: ['websocket', 'polling'],
+        pingTimeout: 60000,
+        pingInterval: 25000,
     });
 
     // On boot: reset stale online statuses & restore billing timers
@@ -198,13 +219,27 @@ export const initSocket = (httpServer) => {
 
             socket.userId = userId;
 
-            // Leave any old user rooms
             [...socket.rooms].forEach(room => {
-                if (room !== socket.id && room.startsWith('user_')) socket.leave(room);
+                if (room !== socket.id && (room.startsWith('user_') || room.startsWith('conv_'))) {
+                    socket.leave(room);
+                }
             });
 
             socket.join(`user_${userId}`);
-            log.info(`User ${userId} registered`);
+            log.info(`User ${userId} registered → room user_${userId}`);
+
+            try {
+                const participations = await prisma.chatParticipant.findMany({
+                    where: { userId },
+                    select: { conversationId: true },
+                });
+                for (const p of participations) {
+                    socket.join(`conv_${p.conversationId}`);
+                }
+                log.info(`User ${userId} joined ${participations.length} conversation room(s)`);
+            } catch (err) {
+                log.warn(`Failed to join conversation rooms for ${userId}: ${err.message}`);
+            }
 
             socket.emit('registered', {
                 success: true,
@@ -212,7 +247,6 @@ export const initSocket = (httpServer) => {
                 socketId: socket.id,
                 room: `user_${userId}`,
             });
-
 
             await setConsultantStatus(userId, 'ONLINE');
         });
@@ -260,8 +294,21 @@ export const initSocket = (httpServer) => {
             }
         });
 
-        socket.on('join_conversation', (data) => {
+        socket.on('join_conversation', async (data) => {
+            if (!data?.conversationId) return;
             socket.join(`conv_${data.conversationId}`);
+            if (socket.userId) {
+                try {
+                    const participant = await prisma.chatParticipant.findFirst({
+                        where: { conversationId: data.conversationId, userId: socket.userId },
+                    });
+                    if (!participant) {
+                        socket.leave(`conv_${data.conversationId}`);
+                    }
+                } catch {
+                    // ignore validation errors
+                }
+            }
         });
 
         //: Send message 
@@ -424,55 +471,65 @@ export const initSocket = (httpServer) => {
             }
         });
 
-        // ── SESSION: Start ──────────────────────────────────────────
+        // ── SESSION: Start (request — billing begins on accept) ─────
         socket.on('start_session', async (data, callback) => {
             try {
                 const { conversationId, sessionType = 'CHAT' } = data;
                 log.info(`🎬 start_session socket: conv=${conversationId}, by=${socket.userId}`);
 
-                let session;
-                try {
-                    session = await chatService.startSession(conversationId, socket.userId, sessionType);
-                } catch (err) {
-                    if (!err.message?.includes('already active')) throw err;
-                    log.warn(`Session already active for ${conversationId} — starting timer anyway`);
-                    session = await prisma.chatConversation.findUnique({ where: { id: conversationId } });
-                }
+                const session = await chatService.startSession(conversationId, socket.userId, sessionType);
 
                 socket.join(`conv_${conversationId}`);
-                startBillingTimer(conversationId);
 
-                // Mark consultant as BUSY during a session
                 const participants = await prisma.chatParticipant.findMany({
                     where: { conversationId },
                     select: { userId: true },
                 });
 
-                // Find consultant participant and mark them BUSY
-                for (const p of participants) {
-                    const user = await prisma.user.findUnique({
-                        where: { id: p.userId },
-                        select: { role: true },
-                    });
-                    if (user?.role === 'CONSULTANT') {
-                        await setConsultantStatus(p.userId, 'BUSY');
-                    }
-                }
-
                 const payload = {
                     conversationId,
                     sessionType: session?.sessionType || sessionType,
-                    startedAt: session?.startedAt || new Date(),
+                    sessionStatus: 'PENDING',
                     pricePerMinute: 2.50,
                 };
-                io.to(`conv_${conversationId}`).emit('session_started', payload);
+                io.to(`conv_${conversationId}`).emit('chat_request_pending', payload);
                 for (const p of participants) {
-                    io.to(`user_${p.userId}`).emit('session_started', payload);
+                    io.to(`user_${p.userId}`).emit('chat_request_pending', payload);
                 }
 
                 if (callback) callback({ success: true, session });
             } catch (err) {
                 log.error(`start_session error: ${err.message}`);
+                if (callback) callback({ success: false, error: err.message });
+            }
+        });
+
+        // ── SESSION: Accept (consultant) ────────────────────────────
+        socket.on('accept_session', async (data, callback) => {
+            try {
+                const { conversationId } = data;
+                log.info(`✅ accept_session socket: conv=${conversationId}, by=${socket.userId}`);
+
+                const session = await chatService.acceptSession(conversationId, socket.userId);
+                socket.join(`conv_${conversationId}`);
+                await notifySessionAccepted(conversationId, session);
+
+                if (callback) callback({ success: true, session });
+            } catch (err) {
+                log.error(`accept_session error: ${err.message}`);
+                if (callback) callback({ success: false, error: err.message });
+            }
+        });
+
+        // ── SESSION: Decline (consultant) ───────────────────────────
+        socket.on('decline_session', async (data, callback) => {
+            try {
+                const { conversationId } = data;
+                const session = await chatService.declineSession(conversationId, socket.userId);
+                io.to(`conv_${conversationId}`).emit('chat_request_declined', { conversationId });
+                if (callback) callback({ success: true, session });
+            } catch (err) {
+                log.error(`decline_session error: ${err.message}`);
                 if (callback) callback({ success: false, error: err.message });
             }
         });
@@ -483,48 +540,21 @@ export const initSocket = (httpServer) => {
                 const { conversationId } = data;
                 log.info(`🏁 end_session socket: conv=${conversationId}, by=${socket.userId}`);
 
-                stopBillingTimer(conversationId);
-                const result = await chatService.endSession(conversationId, 'user_ended');
+                const endTimestamp = Date.now();
+                await prepareSessionEnd(conversationId, endTimestamp);
+
+                const result = await chatService.endSession(conversationId, 'user_ended', endTimestamp);
 
                 if (!result) {
                     if (callback) callback({ success: false, error: 'Failed to end session' });
                     return;
                 }
 
-                // Mark consultant ONLINE again after session ends
-                const participants = await prisma.chatParticipant.findMany({
-                    where: { conversationId },
-                    select: { userId: true },
-                });
-                for (const p of participants) {
-                    const user = await prisma.user.findUnique({
-                        where: { id: p.userId },
-                        select: { role: true },
-                    });
-                    if (user?.role === 'CONSULTANT') {
-                        // Only set ONLINE if they're still connected
-                        const sockets = await io.in(`user_${p.userId}`).fetchSockets();
-                        if (sockets.length > 0) {
-                            await setConsultantStatus(p.userId, 'ONLINE');
-                        }
-                    }
+                if (!result.alreadyEnded) {
+                    await notifySessionEnded(conversationId, result);
                 }
 
-                const endPayload = {
-                    conversationId,
-                    totalMinutes: result.totalMinutes,
-                    totalCost: result.totalCost,
-                    durationSeconds: result.durationSeconds,
-                    reason: result.reason || 'user_ended',
-                    sessionType: result.sessionType,
-                };
-
-                io.to(`conv_${conversationId}`).emit('session_ended', endPayload);
-                for (const p of participants) {
-                    io.to(`user_${p.userId}`).emit('session_ended', endPayload);
-                }
-
-                if (callback) callback({ success: true, ...endPayload });
+                if (callback) callback({ success: true, ...result });
             } catch (err) {
                 log.error(`end_session socket error: ${err.message}`);
                 if (callback) callback({ success: false, error: err.message });
@@ -540,6 +570,170 @@ export const getIO = () => {
     return io;
 };
 
+/** Broadcast pending chat request to conversation + consultant popup */
+export async function notifyChatRequestPending(conversationId, extra = {}) {
+    if (!io) return;
+    const participants = await prisma.chatParticipant.findMany({
+        where: { conversationId },
+        select: { userId: true },
+    });
+    const payload = {
+        conversationId,
+        sessionType: extra.sessionType || 'CHAT',
+        sessionStatus: 'PENDING',
+        customerName: extra.customerName,
+        customerId: extra.customerId,
+        pricePerMinute: extra.pricePerMinute || 2.50,
+    };
+    io.to(`conv_${conversationId}`).emit('chat_request_pending', payload);
+    for (const p of participants) {
+        io.to(`user_${p.userId}`).emit('chat_request_pending', payload);
+    }
+    const consultantUserId = extra.consultantUserId;
+    if (consultantUserId) {
+        io.to(`user_${consultantUserId}`).emit('incoming_chat_request', payload);
+    }
+}
+
+/** Start billing + notify both parties after consultant accepts (REST or socket) */
+export async function notifySessionAccepted(conversationId, session) {
+    if (!io) return;
+    startBillingTimer(conversationId);
+
+    const participants = await prisma.chatParticipant.findMany({
+        where: { conversationId },
+        select: { userId: true },
+    });
+
+    for (const p of participants) {
+        const user = await prisma.user.findUnique({
+            where: { id: p.userId },
+            select: { role: true },
+        });
+        if (user?.role === 'CONSULTANT') {
+            await setConsultantStatus(p.userId, 'BUSY');
+        }
+    }
+
+    const payload = {
+        conversationId,
+        sessionType: session?.sessionType || 'CHAT',
+        startedAt: session?.startedAt || new Date(),
+        pricePerMinute: 2.50,
+        sessionStatus: 'ACTIVE',
+    };
+    io.to(`conv_${conversationId}`).emit('session_started', payload);
+    io.to(`conv_${conversationId}`).emit('chat_request_accepted', payload);
+    for (const p of participants) {
+        io.to(`user_${p.userId}`).emit('session_started', payload);
+        io.to(`user_${p.userId}`).emit('chat_request_accepted', payload);
+    }
+}
+
+export function notifyChatRequestDeclined(conversationId) {
+    if (!io) return;
+    const payload = { conversationId };
+    io.to(`conv_${conversationId}`).emit('chat_request_declined', payload);
+    prisma.chatParticipant.findMany({
+        where: { conversationId },
+        select: { userId: true },
+    }).then((participants) => {
+        for (const p of participants) {
+            io.to(`user_${p.userId}`).emit('chat_request_declined', payload);
+        }
+    }).catch(() => {});
+}
+
+/** Broadcast new chat message to conversation + all participant user rooms */
+export async function broadcastNewMessage(conversationId, message, senderId) {
+    if (!io) return;
+    const payload = { conversationId, message };
+    io.to(`conv_${conversationId}`).emit('new_message', payload);
+    const participants = await prisma.chatParticipant.findMany({
+        where: { conversationId },
+        select: { userId: true },
+    });
+    for (const p of participants) {
+        io.to(`user_${p.userId}`).emit('new_message', payload);
+    }
+}
+
+/** Stop billing timer and instantly notify both parties that session is ending */
+export async function notifySessionEnding(conversationId, endTimestamp = Date.now()) {
+    if (!io) return;
+
+    const conv = await prisma.chatConversation.findUnique({
+        where: { id: conversationId },
+        select: { startedAt: true },
+    });
+
+    const durationSeconds = conv?.startedAt
+        ? Math.floor((endTimestamp - new Date(conv.startedAt).getTime()) / 1000)
+        : 0;
+
+    const payload = {
+        conversationId,
+        endedAt: new Date(endTimestamp).toISOString(),
+        durationSeconds: Math.max(0, durationSeconds),
+        sessionStatus: 'ENDING',
+    };
+
+    io.to(`conv_${conversationId}`).emit('session_ending', payload);
+
+    const participants = await prisma.chatParticipant.findMany({
+        where: { conversationId },
+        select: { userId: true },
+    });
+    for (const p of participants) {
+        io.to(`user_${p.userId}`).emit('session_ending', payload);
+    }
+}
+
+/** Stop timer + broadcast session_ending — call at the very start of end flow */
+export async function prepareSessionEnd(conversationId, endTimestamp = Date.now()) {
+    stopBillingTimer(conversationId);
+    await notifySessionEnding(conversationId, endTimestamp);
+}
+
+/** Stop billing, reset consultant status, notify both parties session ended */
+export async function notifySessionEnded(conversationId, result) {
+    if (!io || !result) return;
+
+    stopBillingTimer(conversationId);
+
+    const participants = await prisma.chatParticipant.findMany({
+        where: { conversationId },
+        select: { userId: true },
+    });
+
+    for (const p of participants) {
+        const user = await prisma.user.findUnique({
+            where: { id: p.userId },
+            select: { role: true },
+        });
+        if (user?.role === 'CONSULTANT') {
+            const sockets = await io.in(`user_${p.userId}`).fetchSockets();
+            if (sockets.length > 0) {
+                await setConsultantStatus(p.userId, 'ONLINE');
+            }
+        }
+    }
+
+    const endPayload = {
+        conversationId,
+        totalMinutes: result.totalMinutes,
+        totalCost: result.totalCost,
+        durationSeconds: result.durationSeconds,
+        reason: result.reason || 'user_ended',
+        sessionType: result.sessionType,
+    };
+
+    io.to(`conv_${conversationId}`).emit('session_ended', endPayload);
+    for (const p of participants) {
+        io.to(`user_${p.userId}`).emit('session_ended', endPayload);
+    }
+}
+
 export const emitIncomingCall = (consultantUserId, callData) => {
     if (io) io.to(`user_${consultantUserId}`).emit('incoming_call', callData);
 };
@@ -549,6 +743,40 @@ export const emitCallAccepted = (userId, callData) => {
 export const emitCallRejected = (userId, callData) => {
     if (io) io.to(`user_${userId}`).emit('call_rejected', callData);
 };
+
+/** Instantly notify both call participants that the call is ending (before billing completes) */
+export async function prepareCallEnd(callId, endedByUserId, endTimestamp = Date.now()) {
+    if (!io) return endTimestamp;
+
+    const call = await prisma.call.findUnique({
+        where: { id: callId },
+        select: {
+            id: true, userId: true, consultantId: true,
+            startTime: true, status: true, callType: true,
+        },
+    });
+
+    if (!call) return endTimestamp;
+
+    const durationSeconds = call.startTime && call.status === 'ACTIVE'
+        ? Math.max(0, Math.floor((endTimestamp - new Date(call.startTime).getTime()) / 1000))
+        : 0;
+
+    const payload = {
+        callId: call.id,
+        endedBy: endedByUserId,
+        endedAt: new Date(endTimestamp).toISOString(),
+        durationSeconds,
+        callType: call.callType,
+        status: 'ENDING',
+    };
+
+    io.to(`user_${call.userId}`).emit('call_ending', payload);
+    io.to(`user_${call.consultantId}`).emit('call_ending', payload);
+
+    return endTimestamp;
+}
+
 export const emitCallEnded = (userId, callData) => {
     if (io) io.to(`user_${userId}`).emit('call_ended', callData);
 };

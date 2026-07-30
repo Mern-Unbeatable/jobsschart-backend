@@ -2,15 +2,47 @@ import Twilio from 'twilio';
 import { Logger } from '../../config/logger.js';
 import { prisma } from '../../config/db.js';
 import { config } from '../../config/config.js';
+import { BadRequestError } from '../globals/helpers/error-handler.js';
 
 const log = new Logger('TwilioService');
 
+/** Twilio trial/test accounts cannot use REST API to create Video rooms */
+function isTrialOrTestRestriction(error) {
+    const msg = String(error?.message || '').toLowerCase();
+    return (
+        msg.includes('test account credentials')
+        || msg.includes('resource not accessible')
+        || msg.includes('trial account')
+        || error?.code === 20003
+        || error?.code === 53126
+    );
+}
+
 class TwilioService {
     constructor() {
-        this.client = Twilio(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN);
+        if (config.TWILIO_ACCOUNT_SID && config.TWILIO_AUTH_TOKEN) {
+            this.client = Twilio(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN);
+        } else {
+            this.client = null;
+        }
     }
 
-    generateAccessToken(userId, identity, roomName, callType) {
+    isConfigured() {
+        return !!(
+            config.TWILIO_ACCOUNT_SID
+            && config.TWILIO_AUTH_TOKEN
+            && config.TWILIO_API_KEY
+            && config.TWILIO_API_SECRET
+        );
+    }
+
+    generateAccessToken(userId, identity, roomName, _callType) {
+        if (!this.isConfigured()) {
+            throw new BadRequestError(
+                'Voice/video calling is not configured on the server. Please set Twilio API credentials.'
+            );
+        }
+
         const { AccessToken } = Twilio.jwt;
         const { VideoGrant } = AccessToken;
 
@@ -18,47 +50,106 @@ class TwilioService {
             config.TWILIO_ACCOUNT_SID,
             config.TWILIO_API_KEY,
             config.TWILIO_API_SECRET,
-            { identity, ttl: 3600 }
+            { identity: String(identity || userId), ttl: 3600 }
         );
 
-        const videoGrant = new VideoGrant({ room: roomName });
-        token.addGrant(videoGrant);
+        // Room is created automatically when the first participant connects (trial-safe)
+        token.addGrant(new VideoGrant({ room: roomName }));
 
         return token.toJwt();
     }
 
-    // Create a Video Room
-    async createRoom(roomName, callId) {
-        try {
-            const room = await this.client.video.rooms.create({
-                uniqueName: roomName,
-                type: 'group',
-                maxParticipants: 2,
-            });
+    /**
+     * Try REST room create (paid accounts). On trial/test accounts, skip REST and
+     * let the Twilio Video SDK auto-create the room when participants connect.
+     */
+    async ensureRoom(roomName, callId) {
+        await prisma.call.update({
+            where: { id: callId },
+            data: { roomUrl: roomName },
+        });
 
-            log.info(`Room created: ${room.sid} for call ${callId}`);
-            await prisma.call.update({
-                where: { id: callId },
-                data: {
-                    telecomCallId: room.sid,
-                    roomUrl: roomName,
-                },
-            });
-
-            return room;
-        } catch (error) {
-            log.error(`Error creating room: ${error.message}`);
-            throw error;
+        if (!this.client) {
+            log.warn('Twilio client not configured — room will auto-create on connect');
+            return { sid: null, autoCreate: true };
         }
+
+        const roomTypes = ['group-small', 'group'];
+
+        for (const type of roomTypes) {
+            try {
+                const room = await this.client.video.rooms.create({
+                    uniqueName: roomName,
+                    type,
+                    maxParticipants: 2,
+                });
+
+                log.info(`Room created (${type}): ${room.sid} for call ${callId}`);
+                await prisma.call.update({
+                    where: { id: callId },
+                    data: { telecomCallId: room.sid, roomUrl: roomName },
+                });
+                return { sid: room.sid, autoCreate: false };
+            } catch (error) {
+                if (error.code === 53113 || error.message?.includes('already exists')) {
+                    return this._reuseExistingRoom(roomName, callId);
+                }
+                if (isTrialOrTestRestriction(error)) {
+                    log.warn(
+                        `REST room create not allowed (${error.message}) — ` +
+                        'using client auto-create (works on Twilio trial accounts)'
+                    );
+                    return { sid: null, autoCreate: true };
+                }
+                log.warn(`Room create failed for type ${type}: ${error.message}`);
+            }
+        }
+
+        log.warn(`All REST room create attempts failed for ${roomName} — using client auto-create`);
+        return { sid: null, autoCreate: true };
     }
 
-    // End room
-    async endRoom(roomSid) {
+    async _reuseExistingRoom(roomName, callId) {
         try {
-            await this.client.video.rooms(roomSid).update({ status: 'completed' });
-            log.info(`Room ${roomSid} ended`);
+            const rooms = await this.client.video.rooms.list({ uniqueName: roomName, limit: 1 });
+            const existing = rooms[0];
+            if (existing) {
+                await prisma.call.update({
+                    where: { id: callId },
+                    data: { telecomCallId: existing.sid, roomUrl: roomName },
+                });
+                return { sid: existing.sid, autoCreate: false };
+            }
+        } catch (listErr) {
+            log.error(`Failed to fetch existing room: ${listErr.message}`);
+        }
+        return { sid: null, autoCreate: true };
+    }
+
+    /** Complete room by SID (RM...) or unique room name */
+    async endRoom(roomSidOrName) {
+        if (!this.client || !roomSidOrName) return;
+
+        try {
+            if (String(roomSidOrName).startsWith('RM')) {
+                await this.client.video.rooms(roomSidOrName).update({ status: 'completed' });
+                log.info(`Room ${roomSidOrName} ended`);
+                return;
+            }
+
+            const rooms = await this.client.video.rooms.list({
+                uniqueName: roomSidOrName,
+                status: 'in-progress',
+                limit: 1,
+            });
+            if (rooms[0]) {
+                await this.client.video.rooms(rooms[0].sid).update({ status: 'completed' });
+                log.info(`Room ${roomSidOrName} (${rooms[0].sid}) ended`);
+            }
         } catch (error) {
-            log.error(`Error ending room: ${error.message}`);
+            if (!isTrialOrTestRestriction(error)) {
+                log.error(`Error ending room: ${error.message}`);
+            }
         }
     }
 

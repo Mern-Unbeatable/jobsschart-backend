@@ -49,7 +49,10 @@ router.get('/unread-count', chatController.getUnreadCount);
 
 // Session billing
 router.post('/conversations/:conversationId/session/start', chatController.startSession);
+router.post('/conversations/:conversationId/session/accept', chatController.acceptSession);
+router.post('/conversations/:conversationId/session/decline', chatController.declineSession);
 router.post('/conversations/:conversationId/session/end', chatController.endSession);
+router.post('/conversations/:conversationId/transcript/email', chatController.emailTranscript);
 router.get('/conversations/:conversationId/session/status', chatController.getSessionStatus);
 
 export const chatRoute = router 

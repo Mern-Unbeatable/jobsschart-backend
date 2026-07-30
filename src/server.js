@@ -529,6 +529,8 @@ export class Server {
     });
 
     app.use((error, _req, res, _next) => {
+      const isProduction = config.NODE_ENV === 'production';
+
       this.log.error('Global error handler', {
         name: error.name,
         message: error.message,
@@ -571,7 +573,14 @@ export class Server {
         });
       }
 
-      const isProduction = config.NODE_ENV === 'production';
+      if (error.name === 'PrismaClientValidationError') {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          status: 'error',
+          statusCode: HTTP_STATUS.BAD_REQUEST,
+          message: isProduction ? 'Invalid request data' : error.message,
+        });
+      }
+
       return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
         status: 'error',
         statusCode: HTTP_STATUS.INTERNAL_SERVER_ERROR,

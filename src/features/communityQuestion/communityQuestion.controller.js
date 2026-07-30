@@ -45,6 +45,15 @@ class CommunityQuestionController {
     });
   });
 
+  // Public: answered questions for Community Services
+  getPublicAnsweredQuestions = catchAsync(async (req, res) => {
+    const result = await communityQuestionService.getPublicAnsweredQuestions(req.query);
+    ResponseHandler.success(res, {
+      message: 'Community services fetched successfully',
+      data: result,
+    });
+  });
+
   // ==================== ADMIN ONLY ROUTES ====================
 
   // Get all questions (Admin)

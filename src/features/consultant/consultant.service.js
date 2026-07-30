@@ -69,13 +69,14 @@ class ConsultantService {
     }
 
     async updateConsultantProfile(userId, data) {
-        const { specialization, bio, pricePerMinute, firstNMinutes, firstNPrice } = data;
+        const { specialization, bio, bioNl, pricePerMinute, firstNMinutes, firstNPrice } = data;
 
         const updatedConsultant = await prisma.consultant.update({
             where: { userId },
             data: {
                 ...(specialization !== undefined && { specialization }),
                 ...(bio !== undefined && { bio }),
+                ...(bioNl !== undefined && { bioNl }),
                 ...(pricePerMinute !== undefined && { pricePerMinute }),
                 ...(firstNMinutes !== undefined && { firstNMinutes }),
                 ...(firstNPrice !== undefined && { firstNPrice }),
@@ -187,13 +188,18 @@ class ConsultantService {
             prisma.consultant.count({ where }),
         ]);
 
+        const statusOrder = { ONLINE: 0, BUSY: 1, OFFLINE: 2 };
         const consultantsWithAvgRating = consultants.map(c => ({
             ...c,
             averageRating: c.reviews.length > 0
                 ? c.reviews.reduce((sum, r) => sum + r.rating, 0) / c.reviews.length
                 : 0,
             totalReviews: c.reviews.length,
-        }));
+        })).sort((a, b) => {
+            const statusDiff = (statusOrder[a.onlineStatus] ?? 3) - (statusOrder[b.onlineStatus] ?? 3);
+            if (statusDiff !== 0) return statusDiff;
+            return (b.averageRating || 0) - (a.averageRating || 0);
+        });
 
         return {
             meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
@@ -202,7 +208,7 @@ class ConsultantService {
     }
 
     async getConsultantById(consultantId) {
-        const consultant = await prisma.consultant.findUnique({
+        let consultant = await prisma.consultant.findUnique({
             where: { id: consultantId },
             include: {
                 user: {
@@ -238,6 +244,45 @@ class ConsultantService {
                 availabilitySlots: true,
             },
         });
+
+        if (!consultant) {
+            consultant = await prisma.consultant.findUnique({
+                where: { userId: consultantId },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            username: true,
+                            name: true,
+                            avatar: true,
+                            bio: true,
+                            location: true,
+                            phone: true,
+                            isVerified: true,
+                            status: true,
+                        },
+                    },
+                    reviews: {
+                        orderBy: { createdAt: 'desc' },
+                        include: {
+                            user: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    username: true,
+                                    avatar: true,
+                                },
+                            },
+                        },
+                    },
+                    earnings: true,
+                    payouts: true,
+                    schedules: true,
+                    availabilitySlots: true,
+                },
+            });
+        }
 
         if (!consultant) return null;
 
@@ -305,8 +350,8 @@ class ConsultantService {
             .filter(e => !e.isPaidOut)
             .reduce((sum, e) => sum + Number(e.consultantShare), 0);
 
-        // Available balance (from wallet)
-        const availableBalance = user?.wallet?.creditBalance || 0;
+        // Available balance = unpaid consultant earnings (not user wallet credits)
+        const availableBalance = withdrawableAmount;
 
         // Calculate this week's income
         const weekIncome = allEarnings
@@ -494,6 +539,80 @@ class ConsultantService {
                     },
                 },
             },
+        });
+    }
+
+    async getMonthlyInvoices(userId) {
+        const consultant = await prisma.consultant.findUnique({
+            where: { userId },
+            select: { id: true, user: { select: { name: true, email: true } } },
+        });
+        if (!consultant) throw new Error('Consultant not found');
+
+        const fiveYearsAgo = new Date();
+        fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+
+        const earnings = await prisma.consultantEarning.findMany({
+            where: {
+                consultantId: consultant.id,
+                createdAt: { gte: fiveYearsAgo },
+            },
+            select: { consultantShare: true, createdAt: true },
+            orderBy: { createdAt: 'desc' },
+        });
+
+        const invoiceMap = new Map();
+        for (const e of earnings) {
+            const d = new Date(e.createdAt);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            if (!invoiceMap.has(key)) {
+                invoiceMap.set(key, { year: d.getFullYear(), month: d.getMonth() + 1, total: 0, label: d.toLocaleString('default', { month: 'long', year: 'numeric' }) });
+            }
+            invoiceMap.get(key).total += Number(e.consultantShare);
+        }
+
+        return Array.from(invoiceMap.values())
+            .map(inv => ({ ...inv, total: Number(inv.total.toFixed(2)) }))
+            .sort((a, b) => b.year - a.year || b.month - a.month);
+    }
+
+    async getInvoiceDownload(userId, year, month) {
+        const invoices = await this.getMonthlyInvoices(userId);
+        const invoice = invoices.find(i => i.year === parseInt(year) && i.month === parseInt(month));
+        if (!invoice) throw new Error('Invoice not found for this period');
+
+        const consultant = await prisma.consultant.findUnique({
+            where: { userId },
+            include: { user: { select: { name: true, email: true } } },
+        });
+
+        const csv = [
+            'Invoice Period,Consultant,Email,Total Earnings (EUR)',
+            `"${invoice.label}","${consultant.user.name}","${consultant.user.email}",${invoice.total}`,
+        ].join('\n');
+
+        return { filename: `invoice-${year}-${String(month).padStart(2, '0')}.csv`, content: csv, invoice };
+    }
+
+    async updateVerificationInfo(userId, data) {
+        const consultant = await prisma.consultant.findUnique({ where: { userId } });
+        if (!consultant) throw new Error('Consultant not found');
+
+        const updateData = {};
+        if (data.bsnNumber !== undefined) updateData.bsnNumber = data.bsnNumber;
+        if (data.kvkNumber !== undefined) updateData.kvkNumber = data.kvkNumber;
+        if (data.cityOfResidence !== undefined) updateData.cityOfResidence = data.cityOfResidence;
+        if (data.businessBankAccount !== undefined) updateData.businessBankAccount = data.businessBankAccount;
+        if (data.idFrontUrl !== undefined) updateData.idFrontUrl = data.idFrontUrl;
+        if (data.idBackUrl !== undefined) updateData.idBackUrl = data.idBackUrl;
+        if (Object.keys(updateData).length > 0) {
+            updateData.verificationStatus = 'PENDING';
+        }
+
+        return prisma.consultant.update({
+            where: { userId },
+            data: updateData,
+            include: { user: { select: { id: true, name: true, email: true } } },
         });
     }
 }

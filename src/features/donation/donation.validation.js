@@ -5,7 +5,7 @@ export const createDonationSchema = z.object({
     name: z.string().min(2, 'Name must be at least 2 characters').max(100),
     phone: z.string().min(5, 'Phone number is required').max(20),
     email: z.string().email('Valid email is required'),
-    amount: z.number().int().positive('Amount must be a positive integer'),
+    amount: z.number().int().min(100, 'Minimum donation amount is €100.00'),
     description: z.string().max(500).optional(),
     location: z.string().max(200).optional(),
     businessName: z.string().max(200).optional(),

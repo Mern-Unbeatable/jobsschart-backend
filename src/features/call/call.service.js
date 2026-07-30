@@ -8,12 +8,63 @@ import {
     ForbiddenError
 } from '../../shared/globals/helpers/error-handler.js';
 import { twilioService } from '../../shared/services/twilio.service.js';
-import { emitIncomingCall, emitCallAccepted, emitCallRejected, emitCallEnded } from '../../socket/index.js';
+import { emitIncomingCall, emitCallAccepted, emitCallRejected, emitCallEnded, prepareCallEnd } from '../../socket/index.js';
 import { sessionService } from '../session/session.service.js';
 const log = new Logger('CallService');
 
+/** Prevent double-billing when two end-call requests arrive at once */
+const endingCallLocks = new Set();
+
 
 class CallService {
+
+    /** Resolve consultant record ID or user ID → consultant user ID */
+    async _resolveConsultantUserId(consultantIdOrUserId) {
+        const byUser = await prisma.user.findUnique({
+            where: { id: consultantIdOrUserId },
+            include: { consultant: { select: { id: true, isApproved: true } } },
+        });
+        if (byUser?.consultant) return byUser.id;
+
+        const byRecord = await prisma.consultant.findUnique({
+            where: { id: consultantIdOrUserId },
+            select: { userId: true },
+        });
+        if (byRecord?.userId) return byRecord.userId;
+
+        throw new NotFoundError('Consultant not found');
+    }
+
+    _normalizeCallType(callType) {
+        const type = String(callType || 'PHONE').toUpperCase();
+        if (type === 'AUDIO') return 'PHONE';
+        if (!['PHONE', 'VIDEO'].includes(type)) {
+            throw new BadRequestError(`Invalid call type: ${callType}. Use PHONE or VIDEO.`);
+        }
+        return type;
+    }
+
+    /** Cancel abandoned PENDING/ACTIVE calls so users are not blocked */
+    async _cleanupStaleCalls(userId, consultantUserId) {
+        const pendingCutoff = new Date(Date.now() - 3 * 60 * 1000);
+        const activeCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+        const result = await prisma.call.updateMany({
+            where: {
+                OR: [
+                    { userId, status: 'PENDING', createdAt: { lt: pendingCutoff } },
+                    { consultantId: consultantUserId, status: 'PENDING', createdAt: { lt: pendingCutoff } },
+                    { userId, status: 'ACTIVE', updatedAt: { lt: activeCutoff } },
+                    { consultantId: consultantUserId, status: 'ACTIVE', updatedAt: { lt: activeCutoff } },
+                ],
+            },
+            data: { status: 'CANCELLED', endTime: new Date() },
+        });
+
+        if (result.count > 0) {
+            log.info(`Cleaned up ${result.count} stale call(s) for user ${userId}`);
+        }
+    }
 
     async checkUserBalance(userId, consultantUserId) {
         const [wallet, consultantUser] = await Promise.all([
@@ -47,17 +98,25 @@ class CallService {
 
 
 
-    async initiateCall(userId, consultantUserId, callType) {
-        // ... existing balance/availability checks stay the same ...
+    async initiateCall(userId, consultantIdOrUserId, callType) {
+        const callTypeNorm = this._normalizeCallType(callType);
+        const consultantUserId = await this._resolveConsultantUserId(consultantIdOrUserId);
+
+        await this._cleanupStaleCalls(userId, consultantUserId);
         await this.checkUserBalance(userId, consultantUserId);
 
-        // Check consultant availability
+        if (!twilioService.isConfigured()) {
+            throw new BadRequestError(
+                'Voice and video calling is not available yet. Twilio credentials are missing on the server.'
+            );
+        }
+
         const consultantUser = await prisma.user.findUnique({
             where: { id: consultantUserId },
-            include: { consultant: true }
+            include: { consultant: true },
         });
 
-        if (!consultantUser || !consultantUser.consultant) {
+        if (!consultantUser?.consultant) {
             throw new NotFoundError('Consultant not found');
         }
 
@@ -71,7 +130,6 @@ class CallService {
             throw new BadRequestError('Consultant is not online');
         }
 
-        // Check for active calls
         const activeCall = await prisma.call.findFirst({
             where: {
                 OR: [
@@ -79,81 +137,110 @@ class CallService {
                     { consultantId: consultantUserId, status: { in: ['PENDING', 'ACTIVE'] } },
                 ],
             },
+            orderBy: { createdAt: 'desc' },
         });
 
         if (activeCall) {
-            throw new ConflictError('You already have an active call. Please end it first.');
+            const ageMs = Date.now() - new Date(activeCall.createdAt).getTime();
+            // Auto-cancel very recent duplicate PENDING from a failed initiate (orphaned record)
+            if (activeCall.status === 'PENDING' && ageMs < 60 * 1000) {
+                await prisma.call.update({
+                    where: { id: activeCall.id },
+                    data: { status: 'CANCELLED', endTime: new Date() },
+                });
+                log.warn(`Auto-cancelled orphaned pending call ${activeCall.id}`);
+            } else {
+                throw new ConflictError(
+                    'You already have an active call. Please end or cancel it before starting a new one.'
+                );
+            }
         }
-        // Generate unique room name
+
         const roomName = `call_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
 
-        // Get user info
         const user = await prisma.user.findUnique({
             where: { id: userId },
-            select: { id: true, name: true, email: true, avatar: true }
+            select: { id: true, name: true, email: true, avatar: true },
         });
 
-        // Create call record
-        const call = await prisma.call.create({
-            data: {
+        let call = null;
+        try {
+            call = await prisma.call.create({
+                data: {
+                    userId,
+                    consultantId: consultantUserId,
+                    callType: callTypeNorm,
+                    status: 'PENDING',
+                    startTime: new Date(),
+                    roomUrl: roomName,
+                },
+                include: {
+                    user: { select: { id: true, name: true, email: true, avatar: true } },
+                },
+            });
+
+            await twilioService.ensureRoom(roomName, call.id);
+
+            const userToken = twilioService.generateAccessToken(
                 userId,
-                consultantId: consultantUserId,
-                callType,
-                status: 'PENDING',
-                startTime: new Date(),
-                roomUrl: roomName,
-            },
-            include: {
-                user: { select: { id: true, name: true, email: true, avatar: true } },
-            },
-        });
-
-        // ✅ FIX: Create Twilio room for ALL call types (not just VIDEO)
-        await twilioService.createRoom(roomName, call.id);
-
-        // Generate tokens for both participants
-        const userToken = twilioService.generateAccessToken(
-            userId,
-            user.name || user.email,
-            roomName,
-            callType
-        );
-
-        const consultantToken = twilioService.generateAccessToken(
-            consultantUserId,
-            consultantUser.name || consultantUser.email,
-            roomName,
-            callType
-        );
-
-        // Emit real-time notification to consultant via Socket.io
-        emitIncomingCall(consultantUserId, {
-            callId: call.id,
-            callerId: userId,
-            callerName: user.name,
-            callerEmail: user.email,
-            callerAvatar: user.avatar,
-            callType: callType,
-            roomName: roomName,
-            token: consultantToken,
-            timestamp: new Date().toISOString()
-        });
-
-        log.info(`Call initiated: ${call.id} - ${callType} call between ${userId} and ${consultantUserId}`);
-
-        return {
-            call: {
-                id: call.id,
+                user.name || user.email,
                 roomName,
-                status: call.status.toLowerCase(),
-                callType: call.callType,
-                startTime: call.startTime,
-            },
-            tokens: {
-                user: { token: userToken, identity: user.name || user.email },
-                consultant: { token: consultantToken, identity: consultantUser.name || consultantUser.email },
-            },
-        };
+                callTypeNorm
+            );
+
+            const consultantToken = twilioService.generateAccessToken(
+                consultantUserId,
+                consultantUser.name || consultantUser.email,
+                roomName,
+                callTypeNorm
+            );
+
+            emitIncomingCall(consultantUserId, {
+                callId: call.id,
+                callerId: userId,
+                callerName: user.name,
+                callerEmail: user.email,
+                callerAvatar: user.avatar,
+                callType: callTypeNorm,
+                roomName,
+                token: consultantToken,
+                timestamp: new Date().toISOString(),
+            });
+
+            log.info(`Call initiated: ${call.id} - ${callTypeNorm} between ${userId} and ${consultantUserId}`);
+
+            return {
+                call: {
+                    id: call.id,
+                    roomName,
+                    status: call.status.toLowerCase(),
+                    callType: call.callType,
+                    startTime: call.startTime,
+                },
+                tokens: {
+                    user: { token: userToken, identity: user.name || user.email },
+                    consultant: { token: consultantToken, identity: consultantUser.name || consultantUser.email },
+                },
+            };
+        } catch (error) {
+            if (call?.id) {
+                await prisma.call.update({
+                    where: { id: call.id },
+                    data: { status: 'CANCELLED', endTime: new Date() },
+                }).catch(() => {});
+                log.warn(`Rolled back failed call ${call.id}`);
+            }
+
+            if (error instanceof BadRequestError
+                || error instanceof NotFoundError
+                || error instanceof ForbiddenError
+                || error instanceof ConflictError) {
+                throw error;
+            }
+
+            log.error(`initiateCall failed: ${error.message}`, { stack: error.stack });
+            throw new BadRequestError(`Could not start call: ${error.message}`);
+        }
     }
 
 
@@ -344,7 +431,35 @@ class CallService {
         };
     }
 
-    async endCall(callId, userId) {
+    async endCall(callId, userId, endTimestamp = Date.now()) {
+        if (endingCallLocks.has(callId)) {
+            let attempts = 0;
+            while (endingCallLocks.has(callId) && attempts < 30) {
+                await new Promise((r) => setTimeout(r, 100));
+                attempts++;
+            }
+            const ended = await prisma.call.findUnique({ where: { id: callId } });
+            if (!ended) throw new NotFoundError('Call not found');
+            if (ended.status === 'COMPLETED' || ended.status === 'CANCELLED') {
+                return {
+                    id: ended.id,
+                    durationSeconds: ended.durationSeconds || 0,
+                    totalCost: parseFloat(ended.totalCost || 0),
+                    status: ended.status,
+                    session: null,
+                };
+            }
+        }
+
+        endingCallLocks.add(callId);
+        try {
+            return await this._finalizeEndCall(callId, userId, endTimestamp);
+        } finally {
+            endingCallLocks.delete(callId);
+        }
+    }
+
+    async _finalizeEndCall(callId, userId, endTimestamp) {
         const call = await prisma.call.findUnique({
             where: { id: callId },
             include: {
@@ -409,8 +524,8 @@ class CallService {
             };
         }
 
-        // ── ACTIVE call: calculate duration & bill ────────────────────
-        const endTime = new Date();
+        // ── ACTIVE call: calculate duration & bill (frozen at endTimestamp) ──
+        const endTime = new Date(endTimestamp);
         const startTime = new Date(call.startTime);
 
         let durationSeconds = Math.floor(
@@ -511,8 +626,8 @@ class CallService {
             log.error(`Failed to create session for call ${callId}: ${sessionError.message}`);
         }
 
-        if (call.telecomCallId) {
-            await twilioService.endRoom(call.telecomCallId);
+        if (call.telecomCallId || call.roomUrl) {
+            await twilioService.endRoom(call.telecomCallId || call.roomUrl);
         }
 
         const otherParticipantId = isUser ? call.consultantId : call.userId;

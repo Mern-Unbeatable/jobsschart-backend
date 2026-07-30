@@ -10,6 +10,8 @@ import {
 
 const router = express.Router();
 
+router.get('/public/answered', communityQuestionController.getPublicAnsweredQuestions);
+
 router.post(
   '/',
   authMiddleware.protect,

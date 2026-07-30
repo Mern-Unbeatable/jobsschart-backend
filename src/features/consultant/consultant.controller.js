@@ -110,7 +110,32 @@ class ConsultantController {
         });
     });
 
+    getMonthlyInvoices = catchAsync(async (req, res) => {
+        const userId = req.user.id;
+        const invoices = await consultantService.getMonthlyInvoices(userId);
+        ResponseHandler.success(res, {
+            message: 'Monthly invoices fetched successfully',
+            data: { invoices },
+        });
+    });
 
+    downloadInvoice = catchAsync(async (req, res) => {
+        const userId = req.user.id;
+        const { year, month } = req.params;
+        const { filename, content } = await consultantService.getInvoiceDownload(userId, year, month);
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(content);
+    });
+
+    updateVerificationInfo = catchAsync(async (req, res) => {
+        const userId = req.user.id;
+        const updated = await consultantService.updateVerificationInfo(userId, req.body);
+        ResponseHandler.updated(res, {
+            message: 'Verification information submitted successfully',
+            data: { consultant: updated },
+        });
+    });
 }
 
 export const consultantController = new ConsultantController();

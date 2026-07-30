@@ -16,6 +16,9 @@ router.patch('/me/profile', authMiddleware.isConsultant, consultantController.up
 router.patch('/me/status', authMiddleware.isConsultant, consultantController.updateOnlineStatus);
 router.get('/me/earnings/dashboard', authMiddleware.isConsultant, consultantController.getEarningsDashboard);
 router.get('/me/earnings/over-time', authMiddleware.isConsultant, consultantController.getEarningsOverTime);
+router.get('/me/invoices', authMiddleware.isConsultant, consultantController.getMonthlyInvoices);
+router.get('/me/invoices/:year/:month/download', authMiddleware.isConsultant, consultantController.downloadInvoice);
+router.patch('/me/verification', authMiddleware.isConsultant, consultantController.updateVerificationInfo);
 router.patch(
     '/:id/approve',
     authMiddleware.authorize('ADMIN'),

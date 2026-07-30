@@ -54,7 +54,7 @@ class AuthMiddleware {
 
       if (!user) {
         this.log.warn(`User not found for ID: ${userId}`);
-        throw new NotFoundError('User not found.');
+        throw new UnauthorizedError('Session expired or user no longer exists. Please login again.');
       }
 
       this.log.debug(`User found: ${user.id}, Role: ${user.role}, Status: ${user.status}`);
