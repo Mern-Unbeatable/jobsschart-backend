@@ -36,6 +36,76 @@ class TwilioService {
         );
     }
 
+    /**
+     * Twilio Video JWT requires API Key (iss) + Account SID (sub) from the SAME account.
+     * Mismatch causes: "Invalid Access Token issuer/subject"
+     */
+    async validateVideoCredentials() {
+        if (!this.isConfigured()) {
+            return { ok: false, reason: 'Twilio Video env vars are missing' };
+        }
+
+        const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY, TWILIO_API_SECRET } = config;
+
+        if (!TWILIO_ACCOUNT_SID.startsWith('AC')) {
+            return { ok: false, reason: 'TWILIO_ACCOUNT_SID must start with AC' };
+        }
+        if (!TWILIO_API_KEY.startsWith('SK')) {
+            return { ok: false, reason: 'TWILIO_API_KEY must be an API Key SID starting with SK (not Auth Token)' };
+        }
+        if (TWILIO_API_SECRET.length < 16) {
+            return { ok: false, reason: 'TWILIO_API_SECRET looks too short — use the secret shown when the API Key was created' };
+        }
+
+        if (!this.client) {
+            return { ok: false, reason: 'Twilio REST client could not be created — check ACCOUNT_SID and AUTH_TOKEN' };
+        }
+
+        try {
+            const account = await this.client.api.accounts(TWILIO_ACCOUNT_SID).fetch();
+            if (!account?.sid) {
+                return { ok: false, reason: 'TWILIO_ACCOUNT_SID is not valid for TWILIO_AUTH_TOKEN' };
+            }
+        } catch (err) {
+            return {
+                ok: false,
+                reason: `TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN rejected by Twilio: ${err.message}`,
+            };
+        }
+
+        try {
+            await this.client.keys(TWILIO_API_KEY).fetch();
+        } catch (err) {
+            if (err?.status === 404 || err?.code === 20404) {
+                return {
+                    ok: false,
+                    reason:
+                        'TWILIO_API_KEY does not belong to TWILIO_ACCOUNT_SID. '
+                        + 'Create a new API Key in the same Twilio project and update TWILIO_API_KEY + TWILIO_API_SECRET.',
+                };
+            }
+            return { ok: false, reason: `Could not verify API Key: ${err.message}` };
+        }
+
+        try {
+            const probe = new Twilio.jwt.AccessToken(
+                TWILIO_ACCOUNT_SID,
+                TWILIO_API_KEY,
+                TWILIO_API_SECRET,
+                { identity: 'credential-probe', ttl: 60 },
+            );
+            probe.addGrant(new Twilio.jwt.AccessToken.VideoGrant({ room: 'credential-probe-room' }));
+            const jwt = probe.toJwt();
+            if (!jwt || jwt.split('.').length !== 3) {
+                return { ok: false, reason: 'Failed to build a valid Twilio access token JWT' };
+            }
+        } catch (err) {
+            return { ok: false, reason: `Token signing failed — TWILIO_API_SECRET may not match TWILIO_API_KEY: ${err.message}` };
+        }
+
+        return { ok: true };
+    }
+
     generateAccessToken(userId, identity, roomName, _callType) {
         if (!this.isConfigured()) {
             throw new BadRequestError(

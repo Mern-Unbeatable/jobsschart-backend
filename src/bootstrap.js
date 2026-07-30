@@ -4,6 +4,7 @@ import { config } from './config/config.js';
 import { connectDatabase } from './config/db.js';
 import { seedAdmin, seedUser, seedConsultant } from './seeds/admin.seeder.js';
 import { seedPackages } from './seeds/package.seeder.js';
+import { twilioService } from './shared/services/twilio.service.js';
 import fs from 'fs';
 import path from 'path';
 const startApplication = async () => {
@@ -45,6 +46,17 @@ const startApplication = async () => {
 
     await connectDatabase();
     config.logger.info('Database connected');
+
+    if (twilioService.isConfigured()) {
+      const twilioCheck = await twilioService.validateVideoCredentials();
+      if (twilioCheck.ok) {
+        config.logger.info('Twilio Video credentials validated');
+      } else {
+        config.logger.error(`Twilio Video misconfigured: ${twilioCheck.reason}`);
+      }
+    } else {
+      config.logger.warn('Twilio Video not configured — calls will fail until env vars are set');
+    }
 
     // ✅ Run all seeds (Admin, User, Consultant)
     await seedAdmin();

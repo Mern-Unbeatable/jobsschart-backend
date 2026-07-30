@@ -59,11 +59,11 @@ const schema = z
     // ============================================
     // TWILIO (for video calls, SMS, etc.)
     // ============================================
-    TWILIO_ACCOUNT_SID: z.string().optional(),
-    TWILIO_AUTH_TOKEN: z.string().optional(),
-    TWILIO_API_KEY: z.string().optional(),
-    TWILIO_API_SECRET: z.string().optional(),
-    TWILIO_VIDEO_SERVICE_SID: z.string().optional(),
+    TWILIO_ACCOUNT_SID: z.string().optional().transform((v) => v?.trim() || undefined),
+    TWILIO_AUTH_TOKEN: z.string().optional().transform((v) => v?.trim() || undefined),
+    TWILIO_API_KEY: z.string().optional().transform((v) => v?.trim() || undefined),
+    TWILIO_API_SECRET: z.string().optional().transform((v) => v?.trim() || undefined),
+    TWILIO_VIDEO_SERVICE_SID: z.string().optional().transform((v) => v?.trim() || undefined),
 
     // Mollie
     MOLLIE_API_KEY: z.string().optional(),
