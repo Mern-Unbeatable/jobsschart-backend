@@ -10,6 +10,10 @@ const MOLLIE_API_BASE = 'https://api.mollie.com/v2';
 // Flat delivery fee — WEBSHOP checkouts only.
 const WEBSHOP_DELIVERY_FEE = 15.00;
 
+// Flat delivery fee — WEBSHOP checkouts only. Must stay in the same currency
+// as the product line items ('chf') since Stripe requires one currency per session.
+const WEBSHOP_DELIVERY_FEE = 15.00;
+
 class PaymentService {
   _assertMollieConfigured() {
     if (!config.MOLLIE_API_KEY) {
@@ -331,11 +335,26 @@ class PaymentService {
 
       if (phone) metadata.customerPhone = phone;
 
-
+      // ── Delivery fee (WEBSHOP only) ──────────────────────────────
+      // Keep the cart subtotal in metadata so the webhook can rebuild
+      // the exact same total without re-deriving it from product prices.
       metadata.itemsSubtotal = String(amount);
       metadata.deliveryFee = String(WEBSHOP_DELIVERY_FEE);
 
+      lineItems.push({
+        price_data: {
+          currency: 'chf',
+          product_data: {
+            name: 'Delivery Fee',
+            description: 'Standard delivery',
+          },
+          unit_amount: Math.round(WEBSHOP_DELIVERY_FEE * 100),
+        },
+        quantity: 1,
+      });
+
       amount += WEBSHOP_DELIVERY_FEE;
+      // ──────────────────────────────────────────────────────────────
 
       metadata.cartItems = JSON.stringify(cartItems);
 
@@ -565,17 +584,8 @@ class PaymentService {
     log.info(`Donation saved + AdCampaign created for user ${donorId}`);
   }
 
-  async _saveOrder(paymentData) {
-    const m = paymentData.metadata;
-    const payment = await this._getPaymentBySessionId(paymentData.id);
-    if (!payment) throw new NotFoundError(`Payment not found for payment ${paymentData.id}`);
-
-    if (payment.orderId) {
-      log.info(`Order already linked for payment ${paymentData.id} -> ${payment.orderId}`);
-      return;
-    }
-
-    const userId = payment.userId;
+  async _saveOrder(session) {
+    const m = session.metadata;
     const cartItems = JSON.parse(m.cartItems);
 
     let shippingAddress = null;
@@ -679,7 +689,7 @@ class PaymentService {
       }
     });
 
-    log.info(`Order created for user ${userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
+    log.info(`Order created for user ${m.userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
   }
 
   async verifyAndUnlock(sessionId, userId) {
