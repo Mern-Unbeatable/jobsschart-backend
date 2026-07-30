@@ -1,17 +1,22 @@
 import { authService } from './auth.services.js';
 import { Helpers } from '../../shared/globals/helpers/helpers.js';
+import {
+  BadRequestError,
+  NotFoundError,
+  UnauthorizedError,
+} from '../../shared/globals/helpers/error-handler.js';
 
 class AuthOtpService {
   async verifyOtpFlow({ email, otp, expectedPurpose }) {
     const user = await authService.getUserByEmail(email);
-    if (!user) throw new Error('User not found');
+    if (!user) throw new NotFoundError('User not found');
 
     const result = await authService.verifyOtp(user.id, otp);
 
-    if (!result.valid) throw new Error(result.reason);
+    if (!result.valid) throw new BadRequestError(result.reason);
 
     if (result.purpose !== expectedPurpose) {
-      throw new Error('Invalid OTP purpose');
+      throw new BadRequestError('Invalid OTP purpose');
     }
 
     await authService.clearOtp(user.id);

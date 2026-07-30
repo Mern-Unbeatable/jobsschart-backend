@@ -243,3 +243,31 @@ export const uploadDonationWithNestedImage = (folderName = "donations") => {
         });
     };
 };
+
+/** Consultant ID verification — front + back of ID document */
+export const uploadVerificationDocuments = () => {
+    const upload = multer({
+        storage: createStorage('verification'),
+        limits: { fileSize: 10 * 1024 * 1024 },
+        fileFilter,
+    }).fields([
+        { name: 'idFront', maxCount: 1 },
+        { name: 'idBack', maxCount: 1 },
+    ]);
+
+    return (req, res, next) => {
+        upload(req, res, (err) => {
+            if (err) {
+                return res.status(400).json({ success: false, message: err.message });
+            }
+            const baseUrl = getBaseUrl();
+            if (req.files?.idFront?.[0]) {
+                req.body.idFrontUrl = `${baseUrl}/uploads/verification/${req.files.idFront[0].filename}`;
+            }
+            if (req.files?.idBack?.[0]) {
+                req.body.idBackUrl = `${baseUrl}/uploads/verification/${req.files.idBack[0].filename}`;
+            }
+            next();
+        });
+    };
+};

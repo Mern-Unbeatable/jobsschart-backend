@@ -54,6 +54,8 @@ class Config {
   MOLLIE_MODE = env.MOLLIE_API_KEY ? (env.MOLLIE_API_KEY.startsWith('test_') ? 'test' : 'live') : (env.MOLLIE_API_KEY_TEST ? 'test' : (env.MOLLIE_API_KEY_LIVE ? 'live' : 'none'));
   MOLLIE_WEBHOOK_URL = env.MOLLIE_WEBHOOK_URL || env.webhookurl || null;
   MOLLIE_WEBHOOK_SECRET = env.MOLLIE_WEBHOOK_SECRET || env.webhooksecrte || null;
+  MOLLIE_CURRENCY = (env.MOLLIE_CURRENCY || 'EUR').toUpperCase();
+  MOLLIE_LOCALE = env.MOLLIE_LOCALE || 'nl_NL';
   HAS_MOLLIE = !!(env.MOLLIE_API_KEY || env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST);
 
   logger;

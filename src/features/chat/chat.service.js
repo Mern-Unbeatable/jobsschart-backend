@@ -597,12 +597,12 @@ class ChatService {
 
             const remainingMinutes = Math.floor(balanceAfter / PRICE_PER_MINUTE);
             let lowBalanceWarning = null;
-            if (remainingMinutes <= 2) {
-                lowBalanceWarning = {
-                    type: remainingMinutes <= 1 ? 'critical' : 'warning',
-                    remainingMinutes,
-                    remainingBalance: balanceAfter,
-                };
+            if (remainingMinutes <= 1) {
+                lowBalanceWarning = { type: 'critical', remainingMinutes, remainingBalance: balanceAfter };
+            } else if (remainingMinutes <= 5) {
+                lowBalanceWarning = { type: 'five_minutes', remainingMinutes, remainingBalance: balanceAfter };
+            } else if (remainingMinutes <= 10) {
+                lowBalanceWarning = { type: 'ten_minutes', remainingMinutes, remainingBalance: balanceAfter };
             }
 
             return {

@@ -25,19 +25,18 @@ export const validatePayoutRequest = validateZod(
 
         routingNumber: z
             .string({
-                required_error: 'Routing number is required',
+                required_error: 'IBAN is required',
             })
-            .min(3,  'Routing number must be at least 3 characters')
-            .max(50, 'Routing number cannot exceed 50 characters')
+            .min(15, 'IBAN must be at least 15 characters')
+            .max(34, 'IBAN cannot exceed 34 characters')
             .trim(),
 
         accountNumber: z
-            .string({
-                required_error: 'Account number is required',
-            })
-            .min(3,  'Account number must be at least 3 characters')
-            .max(50, 'Account number cannot exceed 50 characters')
-            .trim(),
+            .string()
+            .max(50, 'BIC/SWIFT cannot exceed 50 characters')
+            .trim()
+            .optional()
+            .or(z.literal('')),
     })
 );
 

@@ -7,6 +7,17 @@ const log = new Logger('SocketServer');
 let io;
 
 const billingTimers = new Map();
+const callBillingTimers = new Map();
+const callWarningState = new Map();
+const chatWarningState = new Map();
+
+let callServicePromise = null;
+function getCallService() {
+    if (!callServicePromise) {
+        callServicePromise = import('../features/call/call.service.js').then((m) => m.callService);
+    }
+    return callServicePromise;
+}
 
 
 async function setConsultantStatus(userId, status) {
@@ -133,10 +144,25 @@ export function startBillingTimer(conversationId) {
                 });
 
                 if (result.lowBalanceWarning && conv.billingUserId) {
-                    io.to(`user_${conv.billingUserId}`).emit('balance_warning', {
-                        conversationId,
-                        ...result.lowBalanceWarning,
-                    });
+                    const ws = chatWarningState.get(conversationId) || { ten: false, five: false };
+                    const w = result.lowBalanceWarning;
+                    let shouldEmit = false;
+                    if (w.type === 'ten_minutes' && !ws.ten) {
+                        ws.ten = true;
+                        shouldEmit = true;
+                    } else if (w.type === 'five_minutes' && !ws.five) {
+                        ws.five = true;
+                        shouldEmit = true;
+                    } else if (w.type === 'critical') {
+                        shouldEmit = true;
+                    }
+                    chatWarningState.set(conversationId, ws);
+                    if (shouldEmit) {
+                        io.to(`user_${conv.billingUserId}`).emit('balance_warning', {
+                            conversationId,
+                            ...w,
+                        });
+                    }
                 }
             }
         } catch (err) {
@@ -153,7 +179,139 @@ export function stopBillingTimer(conversationId) {
     if (timer) {
         clearInterval(timer);
         billingTimers.delete(conversationId);
+        chatWarningState.delete(conversationId);
         log.info(`🛑 Billing timer stopped for conversation: ${conversationId}`);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// CALL BILLING TIMER (voice/video)
+// ─────────────────────────────────────────────────────────────
+
+export function emitCallBalanceWarning(userId, data) {
+    if (io) io.to(`user_${userId}`).emit('call_balance_warning', data);
+}
+
+export async function autoEndCallInsufficient(callId, billingUserId) {
+    stopCallBillingTimer(callId);
+    const endTimestamp = Date.now();
+    try {
+        const callService = await getCallService();
+        await prepareCallEnd(callId, billingUserId, endTimestamp);
+        await callService.endCall(callId, billingUserId, endTimestamp, 'insufficient_balance');
+    } catch (err) {
+        log.error(`autoEndCallInsufficient failed for ${callId}: ${err.message}`);
+    }
+}
+
+export function startCallBillingTimer(callId) {
+    if (callBillingTimers.has(callId)) return;
+
+    log.info(`💰 Starting call billing timer for: ${callId}`);
+    callWarningState.set(callId, { ten: false, five: false });
+
+    const timer = setInterval(async () => {
+        try {
+            const callService = await getCallService();
+            const call = await prisma.call.findUnique({
+                where: { id: callId },
+                select: { status: true, startTime: true, userId: true },
+            });
+
+            if (!call || call.status !== 'ACTIVE') {
+                stopCallBillingTimer(callId);
+                return;
+            }
+
+            const warnState = callWarningState.get(callId) || { ten: false, five: false };
+            const monitor = await callService.monitorCallBalance(callId, warnState);
+            callWarningState.set(callId, monitor.warningState || warnState);
+
+            if (monitor.warning && monitor.userId) {
+                emitCallBalanceWarning(monitor.userId, { callId, ...monitor.warning });
+            }
+
+            if (monitor.shouldEnd) {
+                await autoEndCallInsufficient(callId, call.userId);
+                return;
+            }
+
+            if (!call.startTime) return;
+
+            const elapsedSeconds = (Date.now() - new Date(call.startTime).getTime()) / 1000;
+            const completedMinutes = Math.floor(elapsedSeconds / 60);
+            const billedCount = await prisma.callBilling.count({ where: { callId } });
+            const unbilled = completedMinutes - billedCount;
+
+            for (let i = 0; i < unbilled; i++) {
+                const result = await callService.billCallMinute(callId);
+                if (!result) {
+                    stopCallBillingTimer(callId);
+                    return;
+                }
+                if (result.ended) {
+                    await autoEndCallInsufficient(callId, call.userId);
+                    return;
+                }
+                if (result.lowBalanceWarning && result.userId) {
+                    const ws = callWarningState.get(callId) || { ten: false, five: false };
+                    const w = result.lowBalanceWarning;
+                    let shouldEmit = false;
+                    if (w.type === 'ten_minutes' && !ws.ten) {
+                        ws.ten = true;
+                        shouldEmit = true;
+                    } else if (w.type === 'five_minutes' && !ws.five) {
+                        ws.five = true;
+                        shouldEmit = true;
+                    } else if (w.type === 'critical') {
+                        shouldEmit = true;
+                    }
+                    callWarningState.set(callId, ws);
+                    if (shouldEmit) {
+                        emitCallBalanceWarning(result.userId, { callId, ...w });
+                    }
+                }
+                if (io && result.userId) {
+                    io.to(`user_${result.userId}`).emit('call_billing_tick', {
+                        callId,
+                        amountCharged: result.amountCharged,
+                        balanceAfter: result.balanceAfter,
+                        minuteNumber: result.minuteNumber,
+                    });
+                }
+            }
+        } catch (err) {
+            log.error(`Call billing timer error for ${callId}: ${err.message}`);
+        }
+    }, 10_000);
+
+    callBillingTimers.set(callId, timer);
+}
+
+export function stopCallBillingTimer(callId) {
+    const timer = callBillingTimers.get(callId);
+    if (timer) {
+        clearInterval(timer);
+        callBillingTimers.delete(callId);
+        callWarningState.delete(callId);
+        log.info(`🛑 Call billing timer stopped for: ${callId}`);
+    }
+}
+
+async function restoreActiveCalls() {
+    try {
+        const activeCalls = await prisma.call.findMany({
+            where: { status: 'ACTIVE' },
+            select: { id: true },
+        });
+        for (const call of activeCalls) {
+            startCallBillingTimer(call.id);
+        }
+        if (activeCalls.length > 0) {
+            log.info(`Restored ${activeCalls.length} active call billing timer(s)`);
+        }
+    } catch (err) {
+        log.error(`Failed to restore active calls: ${err.message}`);
     }
 }
 
@@ -206,6 +364,7 @@ export const initSocket = (httpServer) => {
     // On boot: reset stale online statuses & restore billing timers
     resetAllConsultantsOffline();
     restoreActiveSessions();
+    restoreActiveCalls();
 
     io.on('connection', (socket) => {
         log.info(`Client connected: ${socket.id}`);

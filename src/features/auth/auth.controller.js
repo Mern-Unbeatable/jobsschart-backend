@@ -2,6 +2,14 @@ import { config } from '../../config/config.js';
 import { Logger } from '../../config/logger.js';
 import { catchAsync } from '../../shared/globals/decorators/catch-async.js';
 import { Helpers } from '../../shared/globals/helpers/helpers.js';
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from '../../shared/globals/helpers/error-handler.js';
 import { ResponseHandler } from '../../shared/globals/helpers/response.handler.js';
 import { mailTransport } from '../../shared/services/mail.transport.js';
 import { authService } from './auth.services.js';
@@ -32,11 +40,7 @@ class AuthController {
   }
 
   signUp = catchAsync(async (req, res) => {
-    console.log('body check', req.body)
     const validatedData = signupSchema.parse(req.body);
-
-
-
     const {
       name,
       email,
@@ -58,7 +62,7 @@ class AuthController {
     this.log.info(`Signup attempt for email: ${email}`);
 
     const existingUser = await authService.getUserByEmail(email);
-    if (existingUser) throw new Error('Email is already in use');
+    if (existingUser) throw new ConflictError('Email is already in use');
 
     const hashedPassword = await authService.hashPassword(password);
 
@@ -120,12 +124,24 @@ class AuthController {
     this.log.info(`Login attempt: ${email}`);
 
     const user = await authService.getUserByEmailWithPassword(email);
-    if (!user) throw new Error('Invalid email or password');
-    if (user.status === 'SUSPENDED') throw new Error('Your account has been suspended. Please contact support.');
-    if (user.status === 'BANNED') throw new Error('Your account has been banned.');
+    if (!user) {
+      throw new ValidationError('Login failed', [
+        { field: 'email', message: 'No account found with this email address' },
+      ]);
+    }
+    if (user.status === 'SUSPENDED') {
+      throw new ForbiddenError('Your account has been suspended. Please contact support.');
+    }
+    if (user.status === 'BANNED') {
+      throw new ForbiddenError('Your account has been banned.');
+    }
 
     const isMatch = await authService.comparePassword(password, user.password);
-    if (!isMatch) throw new Error('Invalid email or password');
+    if (!isMatch) {
+      throw new ValidationError('Login failed', [
+        { field: 'password', message: 'Password does not match' },
+      ]);
+    }
 
     const tokens = {
       accessToken: Helpers.generateAccessToken({ id: user.id, email: user.email, role: user.role }),
@@ -149,14 +165,14 @@ class AuthController {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) refreshToken = authHeader.substring(7);
     if (!refreshToken) refreshToken = req.cookies?.refreshToken;
-    if (!refreshToken) throw new Error('Refresh token required');
+    if (!refreshToken) throw new UnauthorizedError('Refresh token required');
 
     const decoded = Helpers.verifyRefreshToken(refreshToken);
-    if (!decoded?.id) throw new Error('Invalid or expired refresh token');
+    if (!decoded?.id) throw new UnauthorizedError('Invalid or expired refresh token');
 
     const user = await authService.getUserById(decoded.id);
-    if (!user) throw new Error('User not found');
-    if (user.refreshTokens !== refreshToken) throw new Error('Invalid refresh token');
+    if (!user) throw new NotFoundError('User not found');
+    if (user.refreshTokens !== refreshToken) throw new UnauthorizedError('Invalid refresh token');
 
     const newAccessToken = Helpers.generateAccessToken({ id: user.id, email: user.email, role: user.role });
     const newRefreshToken = Helpers.generateRefreshToken({ id: user.id });
@@ -188,16 +204,16 @@ class AuthController {
   });
 
   changePassword = catchAsync(async (req, res) => {
-    if (!req.user?.id) throw new Error('User not authenticated');
+    if (!req.user?.id) throw new UnauthorizedError('User not authenticated');
     const { currentPassword, newPassword, confirmPassword } = changePasswordSchema.parse(req.body);
-    if (newPassword !== confirmPassword) throw new Error("Passwords don't match");
+    if (newPassword !== confirmPassword) throw new BadRequestError("Passwords don't match");
 
     const userId = req.user.id;
     const user = await authService.getUserByIdWithPassword(userId);
-    if (!user) throw new Error('User not found');
+    if (!user) throw new NotFoundError('User not found');
 
     const isMatch = await authService.comparePassword(currentPassword, user.password);
-    if (!isMatch) throw new Error('Current password is incorrect');
+    if (!isMatch) throw new BadRequestError('Current password is incorrect');
 
     const hashedPassword = await authService.hashPassword(newPassword);
     await authService.updatePassword(userId, hashedPassword);
@@ -212,7 +228,7 @@ class AuthController {
     const user = await authService.getUserByEmailWithPassword(email);
     if (!user) {
       this.log.warn(`Forgot password: no account for ${email}`);
-      throw new Error('No account found with this email address');
+      throw new NotFoundError('No account found with this email address');
     }
 
 
@@ -233,9 +249,9 @@ class AuthController {
     } catch (emailError) {
       this.log.error(`SMTP error for ${userEmail}: [${emailError.code}] ${emailError.message}`);
       if (config.NODE_ENV === 'development') {
-        throw new Error(`Email failed: [${emailError.code}] ${emailError.message}`);
+        throw new BadRequestError(`Email failed: [${emailError.code}] ${emailError.message}`);
       }
-      throw new Error('Failed to send reset code. Please try again later.');
+      throw new BadRequestError('Failed to send reset code. Please try again later.');
     }
 
     ResponseHandler.success(res, {
@@ -249,8 +265,8 @@ class AuthController {
 
   verifyResetOtp = catchAsync(async (req, res) => {
     const { otp, email } = req.body;
-    if (!email) throw new Error('Email is required');
-    if (!otp) throw new Error('OTP is required');
+    if (!email) throw new BadRequestError('Email is required');
+    if (!otp) throw new BadRequestError('OTP is required');
 
     this.log.info(`OTP verification for: ${email}`);
 
@@ -269,16 +285,18 @@ class AuthController {
   resetPassword = catchAsync(async (req, res) => {
     const { newPassword, confirmPassword, email } = req.body;
 
-    if (!email) throw new Error('Email is required');
-    if (!newPassword || newPassword.length < 6) throw new Error('Password must be at least 6 characters');
-    if (newPassword !== confirmPassword) throw new Error("Passwords don't match");
+    if (!email) throw new BadRequestError('Email is required');
+    if (!newPassword || newPassword.length < 6) {
+      throw new BadRequestError('Password must be at least 6 characters');
+    }
+    if (newPassword !== confirmPassword) throw new BadRequestError("Passwords don't match");
 
     if (!verificationStore.isVerified(email)) {
-      throw new Error('Please verify your OTP first. OTP verification may have expired.');
+      throw new BadRequestError('Please verify your OTP first. OTP verification may have expired.');
     }
 
     const user = await authService.getUserByEmailWithPassword(email);
-    if (!user) throw new Error('User not found');
+    if (!user) throw new NotFoundError('User not found');
 
     const hashedPassword = await authService.hashPassword(newPassword);
     await authService.updatePassword(user.id, hashedPassword);

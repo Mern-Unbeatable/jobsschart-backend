@@ -71,6 +71,8 @@ const schema = z
     MOLLIE_API_KEY_TEST: z.string().optional(),
     MOLLIE_WEBHOOK_URL: z.string().url().optional(),
     MOLLIE_WEBHOOK_SECRET: z.string().optional(),
+    MOLLIE_CURRENCY: z.string().length(3).optional().default('EUR'),
+    MOLLIE_LOCALE: z.string().optional().default('nl_NL'),
 
     // Backward-compat aliases from existing .env naming
     webhookurl: z.string().url().optional(),

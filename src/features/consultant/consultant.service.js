@@ -1,5 +1,7 @@
 // src/features/consultant/consultant.service.js
 import { prisma } from '../../config/db.js';
+import { invoicePdfService } from '../../shared/services/invoice-pdf.service.js';
+import { BadRequestError, NotFoundError } from '../../shared/globals/helpers/error-handler.js';
 import { Logger } from '../../config/logger.js';
 
 class ConsultantService {
@@ -304,7 +306,7 @@ class ConsultantService {
             select: { id: true },
         });
 
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -419,7 +421,7 @@ class ConsultantService {
             select: { id: true },
         });
 
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
         const allEarnings = await prisma.consultantEarning.findMany({
             where: { consultantId: consultant.id },
@@ -489,7 +491,7 @@ class ConsultantService {
             where: { id: consultantId },
         });
 
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
         const updatedConsultant = await prisma.consultant.update({
             where: { id: consultantId },
@@ -523,7 +525,7 @@ class ConsultantService {
             where: { userId },
         });
 
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
         return prisma.schedule.update({
             where: { id: scheduleId, consultantId: consultant.id },
@@ -547,7 +549,7 @@ class ConsultantService {
             where: { userId },
             select: { id: true, user: { select: { name: true, email: true } } },
         });
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
         const fiveYearsAgo = new Date();
         fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
@@ -564,9 +566,17 @@ class ConsultantService {
         const invoiceMap = new Map();
         for (const e of earnings) {
             const d = new Date(e.createdAt);
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const year = d.getUTCFullYear();
+            const month = d.getUTCMonth() + 1;
+            const key = `${year}-${String(month).padStart(2, '0')}`;
             if (!invoiceMap.has(key)) {
-                invoiceMap.set(key, { year: d.getFullYear(), month: d.getMonth() + 1, total: 0, label: d.toLocaleString('default', { month: 'long', year: 'numeric' }) });
+                const labelDate = new Date(Date.UTC(year, month - 1, 1));
+                invoiceMap.set(key, {
+                    year,
+                    month,
+                    total: 0,
+                    label: labelDate.toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
+                });
             }
             invoiceMap.get(key).total += Number(e.consultantShare);
         }
@@ -577,42 +587,126 @@ class ConsultantService {
     }
 
     async getInvoiceDownload(userId, year, month) {
-        const invoices = await this.getMonthlyInvoices(userId);
-        const invoice = invoices.find(i => i.year === parseInt(year) && i.month === parseInt(month));
-        if (!invoice) throw new Error('Invoice not found for this period');
-
         const consultant = await prisma.consultant.findUnique({
             where: { userId },
             include: { user: { select: { name: true, email: true } } },
         });
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
-        const csv = [
-            'Invoice Period,Consultant,Email,Total Earnings (EUR)',
-            `"${invoice.label}","${consultant.user.name}","${consultant.user.email}",${invoice.total}`,
-        ].join('\n');
+        const y = parseInt(year, 10);
+        const m = parseInt(month, 10);
+        const start = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0));
+        const end = new Date(Date.UTC(y, m, 0, 23, 59, 59, 999));
 
-        return { filename: `invoice-${year}-${String(month).padStart(2, '0')}.csv`, content: csv, invoice };
+        const earnings = await prisma.consultantEarning.findMany({
+            where: {
+                consultantId: consultant.id,
+                createdAt: { gte: start, lte: end },
+            },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        if (earnings.length === 0) throw new NotFoundError('Invoice not found for this period');
+
+        const lineItems = earnings.map((e) => ({
+            date: e.createdAt,
+            callId: e.callId,
+            minutes: e.minutes,
+            grossAmount: Number(e.grossAmount),
+            consultantShare: Number(e.consultantShare),
+            platformShare: Number(e.platformShare),
+        }));
+
+        const totalGross = lineItems.reduce((s, i) => s + i.grossAmount, 0);
+        const totalShare = lineItems.reduce((s, i) => s + i.consultantShare, 0);
+        const totalPlatform = lineItems.reduce((s, i) => s + i.platformShare, 0);
+        const periodLabel = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-GB', {
+            month: 'long',
+            year: 'numeric',
+            timeZone: 'UTC',
+        });
+        const invoiceNumber = `ILL-${y}${String(m).padStart(2, '0')}-${consultant.id.slice(0, 8).toUpperCase()}`;
+        const issueDate = new Date().toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: 'long',
+            year: 'numeric',
+        });
+
+        const pdfBuffer = await invoicePdfService.generateConsultantInvoicePdf({
+            invoiceNumber,
+            periodLabel,
+            issueDate,
+            consultantName: consultant.user.name,
+            consultantEmail: consultant.user.email,
+            kvkNumber: consultant.kvkNumber,
+            cityOfResidence: consultant.cityOfResidence,
+            businessBankAccount: consultant.businessBankAccount,
+            lineItems,
+            totalGross: Number(totalGross.toFixed(2)),
+            totalShare: Number(totalShare.toFixed(2)),
+            totalPlatform: Number(totalPlatform.toFixed(2)),
+        });
+
+        return {
+            filename: `Illorac-Invoice-${year}-${String(month).padStart(2, '0')}.pdf`,
+            buffer: pdfBuffer,
+            contentType: 'application/pdf',
+            invoice: { year: y, month: m, total: Number(totalShare.toFixed(2)), label: periodLabel },
+        };
     }
 
     async updateVerificationInfo(userId, data) {
         const consultant = await prisma.consultant.findUnique({ where: { userId } });
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
-        const updateData = {};
-        if (data.bsnNumber !== undefined) updateData.bsnNumber = data.bsnNumber;
-        if (data.kvkNumber !== undefined) updateData.kvkNumber = data.kvkNumber;
-        if (data.cityOfResidence !== undefined) updateData.cityOfResidence = data.cityOfResidence;
-        if (data.businessBankAccount !== undefined) updateData.businessBankAccount = data.businessBankAccount;
-        if (data.idFrontUrl !== undefined) updateData.idFrontUrl = data.idFrontUrl;
-        if (data.idBackUrl !== undefined) updateData.idBackUrl = data.idBackUrl;
-        if (Object.keys(updateData).length > 0) {
-            updateData.verificationStatus = 'PENDING';
-        }
+        const updateData = {
+            bsnNumber: data.bsnNumber?.trim(),
+            kvkNumber: data.kvkNumber?.trim(),
+            cityOfResidence: data.cityOfResidence?.trim(),
+            businessBankAccount: data.businessBankAccount?.replace(/\s/g, '').toUpperCase(),
+            idFrontUrl: data.idFrontUrl,
+            idBackUrl: data.idBackUrl,
+            verificationStatus: 'PENDING',
+        };
 
         return prisma.consultant.update({
             where: { userId },
             data: updateData,
             include: { user: { select: { id: true, name: true, email: true } } },
+        });
+    }
+
+    async getPendingVerifications() {
+        return prisma.consultant.findMany({
+            where: { verificationStatus: 'PENDING' },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        phone: true,
+                        avatar: true,
+                    },
+                },
+            },
+            orderBy: { updatedAt: 'desc' },
+        });
+    }
+
+    async reviewVerification(consultantId, { status, rejectReason }) {
+        const consultant = await prisma.consultant.findUnique({ where: { id: consultantId } });
+        if (!consultant) throw new NotFoundError('Consultant not found');
+        if (consultant.verificationStatus !== 'PENDING') {
+            throw new BadRequestError('Only pending verifications can be reviewed');
+        }
+
+        return prisma.consultant.update({
+            where: { id: consultantId },
+            data: { verificationStatus: status },
+            include: {
+                user: { select: { id: true, name: true, email: true } },
+            },
         });
     }
 }

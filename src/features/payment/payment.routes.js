@@ -12,6 +12,7 @@ router.post('/webhook', paymentController.handleWebhook);
 router.use(authMiddleware.protect);
 
 router.post('/checkout', uploadDonationWithNestedImage('donations'), paymentController.createCheckout);
+router.get('/methods', paymentController.getPaymentMethods);
 router.get('/verify', paymentController.verifyPayment);
 router.get('/history', paymentController.getPaymentHistory);
 

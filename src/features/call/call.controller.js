@@ -10,7 +10,7 @@ import {
     ForbiddenError,
     ConflictError,
 } from '../../shared/globals/helpers/error-handler.js';
-import { prepareCallEnd } from '../../socket/index.js';
+import { prepareCallEnd, startCallBillingTimer, stopCallBillingTimer } from '../../socket/index.js';
 
 const log = new Logger('CallController');
 
@@ -57,6 +57,7 @@ class CallController {
         const { callId } = req.params;
         try {
             const result = await callService.acceptCall(callId, req.user.id);
+            startCallBillingTimer(callId);
             ResponseHandler.success(res, { message: 'Call accepted successfully', data: result });
         } catch (err) {
             if (err instanceof BadRequestError) return ResponseHandler.badRequest(res, { message: err.message });
@@ -95,6 +96,7 @@ class CallController {
     endCall = catchAsync(async (req, res) => {
         const { callId } = req.params;
         const endTimestamp = Date.now();
+        stopCallBillingTimer(callId);
         try {
             try {
                 await prepareCallEnd(callId, req.user.id, endTimestamp);
@@ -113,6 +115,7 @@ class CallController {
 
     cancelCall = catchAsync(async (req, res) => {
         const { callId } = req.params;
+        stopCallBillingTimer(callId);
         try {
             const call = await callService.cancelCall(callId, req.user.id);
             ResponseHandler.success(res, { message: 'Call cancelled successfully', data: { call } });

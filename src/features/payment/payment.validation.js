@@ -40,6 +40,20 @@ export const createCheckoutSchema = z
     cartItems: z.array(cartItemSchema).min(1).optional(),
     shippingAddress: shippingAddressSchema,
     phone: z.string().max(20).optional(),
+    paymentMethod: z.enum([
+      'ideal',
+      'bancontact',
+      'creditcard',
+      'paypal',
+      'applepay',
+      'googlepay',
+      'banktransfer',
+      'klarnapaylater',
+      'klarnapaynow',
+      'klarnasliceit',
+      'giftcard',
+      'paysafecard',
+    ]).optional(),
   })
   .refine(
     (data) => {
@@ -52,6 +66,10 @@ export const createCheckoutSchema = z
       message: 'packageId required for PACKAGE | donationData required for DONATION | cartItems required for WEBSHOP',
     }
   );
+
+export const paymentMethodsQuerySchema = z.object({
+  amount: z.coerce.number().positive().optional().default(10),
+});
 
 export const verifyPaymentSchema = z.object({
   session_id: z.string().min(1, 'session_id is required'),

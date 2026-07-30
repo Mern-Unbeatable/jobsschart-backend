@@ -15,6 +15,9 @@ const log = new Logger('CallService');
 /** Prevent double-billing when two end-call requests arrive at once */
 const endingCallLocks = new Set();
 
+const CONSULTANT_SHARE_RATE = 0.5;
+const PLATFORM_SHARE_RATE = 0.5;
+
 
 class CallService {
 
@@ -244,6 +247,135 @@ class CallService {
     }
 
 
+    _buildLowBalanceWarning(remainingMinutes, remainingBalance) {
+        if (remainingMinutes <= 1) {
+            return { type: 'critical', remainingMinutes, remainingBalance };
+        }
+        if (remainingMinutes <= 5) {
+            return { type: 'five_minutes', remainingMinutes, remainingBalance };
+        }
+        if (remainingMinutes <= 10) {
+            return { type: 'ten_minutes', remainingMinutes, remainingBalance };
+        }
+        return null;
+    }
+
+    /** Monitor balance during active call — warnings + auto-end trigger */
+    async monitorCallBalance(callId, warningState = {}) {
+        const call = await prisma.call.findUnique({
+            where: { id: callId },
+            include: {
+                user: { include: { wallet: true } },
+                consultant: { include: { consultant: true } },
+                billing: true,
+            },
+        });
+
+        if (!call || call.status !== 'ACTIVE' || !call.startTime) {
+            return { shouldEnd: false, warning: null, warningState };
+        }
+
+        const ratePerMinute = Number(call.consultant?.consultant?.pricePerMinute || 2.5);
+        const ratePerSecond = ratePerMinute / 60;
+        const balance = Number(call.user?.wallet?.creditBalance || 0);
+        const elapsedSeconds = Math.max(0, (Date.now() - new Date(call.startTime).getTime()) / 1000);
+        const accruedTotal = elapsedSeconds * ratePerSecond;
+        const alreadyBilled = parseFloat(call.totalCost || 0);
+        const unbilledAccrual = Math.max(0, accruedTotal - alreadyBilled);
+        const remainingAffordable = balance - unbilledAccrual;
+        const remainingMinutes = Math.max(0, Math.floor(remainingAffordable / ratePerMinute));
+
+        let warning = null;
+        const nextState = { ...warningState };
+
+        if (remainingMinutes <= 10 && !nextState.ten) {
+            warning = { type: 'ten_minutes', remainingMinutes, remainingBalance: Number(remainingAffordable.toFixed(2)) };
+            nextState.ten = true;
+        } else if (remainingMinutes <= 5 && !nextState.five) {
+            warning = { type: 'five_minutes', remainingMinutes, remainingBalance: Number(remainingAffordable.toFixed(2)) };
+            nextState.five = true;
+        } else if (remainingMinutes <= 1) {
+            warning = { type: 'critical', remainingMinutes, remainingBalance: Number(remainingAffordable.toFixed(2)) };
+        }
+
+        const shouldEnd = remainingAffordable <= 0.05 || balance <= 0;
+
+        return { shouldEnd, warning, warningState: nextState, userId: call.userId, consultantId: call.consultantId };
+    }
+
+    /** Bill one completed minute during an active call */
+    async billCallMinute(callId) {
+        const call = await prisma.call.findUnique({
+            where: { id: callId },
+            include: {
+                user: { include: { wallet: true } },
+                consultant: { include: { consultant: true } },
+                billing: true,
+            },
+        });
+
+        if (!call || call.status !== 'ACTIVE') return null;
+
+        const consultantProfile = call.consultant?.consultant;
+        if (!consultantProfile) return null;
+
+        const ratePerMinute = Number(consultantProfile.pricePerMinute || 2.5);
+        const wallet = call.user?.wallet;
+        const balanceBefore = Number(wallet?.creditBalance || 0);
+
+        if (balanceBefore < ratePerMinute) {
+            return { ended: true, reason: 'insufficient_balance', callId, userId: call.userId };
+        }
+
+        const minuteNumber = (call.billing?.length || 0) + 1;
+        const balanceAfter = Number((balanceBefore - ratePerMinute).toFixed(2));
+
+        await prisma.$transaction(async (tx) => {
+            await tx.wallet.update({
+                where: { userId: call.userId },
+                data: { creditBalance: balanceAfter },
+            });
+
+            await tx.creditTransaction.create({
+                data: {
+                    userId: call.userId,
+                    transactionType: 'CALL_DEDUCTION',
+                    amount: -ratePerMinute,
+                    callId: call.id,
+                    description: `${call.callType} call - minute ${minuteNumber} · €${ratePerMinute}/min`,
+                    balanceBefore,
+                    balanceAfter,
+                },
+            });
+
+            await tx.callBilling.create({
+                data: {
+                    callId: call.id,
+                    minuteNumber,
+                    creditsDeducted: ratePerMinute,
+                },
+            });
+
+            await tx.call.update({
+                where: { id: callId },
+                data: { totalCost: { increment: ratePerMinute } },
+            });
+        });
+
+        const remainingMinutes = Math.floor(balanceAfter / ratePerMinute);
+        const lowBalanceWarning = this._buildLowBalanceWarning(remainingMinutes, balanceAfter);
+
+        return {
+            billed: true,
+            minuteNumber,
+            amountCharged: ratePerMinute,
+            balanceAfter,
+            lowBalanceWarning,
+            callId,
+            userId: call.userId,
+        };
+    }
+
     async acceptCall(callId, consultantUserId) {
         const call = await prisma.call.findUnique({
             where: { id: callId },
@@ -431,7 +563,7 @@ class CallService {
         };
     }
 
-    async endCall(callId, userId, endTimestamp = Date.now()) {
+    async endCall(callId, userId, endTimestamp = Date.now(), reason = 'user_ended') {
         if (endingCallLocks.has(callId)) {
             let attempts = 0;
             while (endingCallLocks.has(callId) && attempts < 30) {
@@ -453,13 +585,13 @@ class CallService {
 
         endingCallLocks.add(callId);
         try {
-            return await this._finalizeEndCall(callId, userId, endTimestamp);
+            return await this._finalizeEndCall(callId, userId, endTimestamp, reason);
         } finally {
             endingCallLocks.delete(callId);
         }
     }
 
-    async _finalizeEndCall(callId, userId, endTimestamp) {
+    async _finalizeEndCall(callId, userId, endTimestamp, reason = 'user_ended') {
         const call = await prisma.call.findUnique({
             where: { id: callId },
             include: {
@@ -524,7 +656,7 @@ class CallService {
             };
         }
 
-        // ── ACTIVE call: calculate duration & bill (frozen at endTimestamp) ──
+        // ── ACTIVE call: bill remaining seconds only (minutes already billed live) ──
         const endTime = new Date(endTimestamp);
         const startTime = new Date(call.startTime);
 
@@ -533,25 +665,22 @@ class CallService {
         );
         const finalDurationSeconds = Math.max(1, Math.min(durationSeconds, 86400));
 
-        // Use the already-included consultant instead of a separate query
         const consultantProfile = call.consultant?.consultant;
         if (!consultantProfile) {
             throw new NotFoundError('Consultant profile not found');
         }
 
-        const ratePerMinute = consultantProfile.pricePerMinute || 2.5;
+        const ratePerMinute = Number(consultantProfile.pricePerMinute || 2.5);
         const ratePerSecond = ratePerMinute / 60;
 
-        const totalCost = Number(
-            (finalDurationSeconds * ratePerSecond).toFixed(2)
-        );
-        const consultantShare = Number((totalCost * 0.5).toFixed(2));
-        const platformShare = Number((totalCost * 0.5).toFixed(2));
-
-        // ✅ FIX: Round up for Int fields — prevents crash when duration < 60s
-        const billedMinutes = Math.ceil(finalDurationSeconds / 60);
+        const alreadyBilledCost = parseFloat(call.totalCost || 0);
+        const fullCost = Number((finalDurationSeconds * ratePerSecond).toFixed(2));
+        let remainderCost = Number(Math.max(0, fullCost - alreadyBilledCost).toFixed(2));
 
         let session = null;
+        let totalCost = alreadyBilledCost;
+        let consultantShare = 0;
+        let platformShare = 0;
 
         await prisma.$transaction(async (tx) => {
             const wallet = await tx.wallet.findUnique({
@@ -562,25 +691,44 @@ class CallService {
                 throw new NotFoundError('Wallet not found');
             }
 
-            const balanceBefore = Number(wallet.creditBalance);
-            const balanceAfter = Number((balanceBefore - totalCost).toFixed(2));
+            const balanceBefore = Math.max(0, Number(wallet.creditBalance));
+            // Never deduct more than available balance
+            const actualRemainder = Number(Math.min(remainderCost, balanceBefore).toFixed(2));
+            const balanceAfter = Number(Math.max(0, balanceBefore - actualRemainder).toFixed(2));
+            totalCost = Number((alreadyBilledCost + actualRemainder).toFixed(2));
+            consultantShare = Number((totalCost * CONSULTANT_SHARE_RATE).toFixed(2));
+            platformShare = Number((totalCost - consultantShare).toFixed(2));
 
-            await tx.wallet.update({
-                where: { userId: call.userId },
-                data: { creditBalance: balanceAfter },
-            });
+            if (actualRemainder > 0) {
+                await tx.wallet.update({
+                    where: { userId: call.userId },
+                    data: { creditBalance: balanceAfter },
+                });
 
-            await tx.creditTransaction.create({
-                data: {
-                    userId: call.userId,
-                    transactionType: 'CALL_DEDUCTION',
-                    amount: -totalCost,
-                    callId: call.id,
-                    description: `${call.callType} call - ${finalDurationSeconds}s @ €${ratePerMinute}/min`,
-                    balanceBefore,
-                    balanceAfter,
-                },
-            });
+                await tx.creditTransaction.create({
+                    data: {
+                        userId: call.userId,
+                        transactionType: 'CALL_DEDUCTION',
+                        amount: -actualRemainder,
+                        callId: call.id,
+                        description: `${call.callType} call - remaining ${finalDurationSeconds}s @ €${ratePerMinute}/min`,
+                        balanceBefore,
+                        balanceAfter,
+                    },
+                });
+
+                const billedMinutes = await tx.callBilling.count({ where: { callId: call.id } });
+                await tx.callBilling.create({
+                    data: {
+                        callId: call.id,
+                        minuteNumber: billedMinutes + 1,
+                        creditsDeducted: actualRemainder,
+                    },
+                });
+            } else if (balanceBefore <= 0 && alreadyBilledCost <= 0) {
+                // No charge possible
+                totalCost = 0;
+            }
 
             await tx.call.update({
                 where: { id: callId },
@@ -592,26 +740,25 @@ class CallService {
                 },
             });
 
-            await tx.callBilling.create({
-                data: {
-                    callId: call.id,
-                    minuteNumber: billedMinutes,       // ✅ FIX: Int — was decimal before
-                    creditsDeducted: totalCost,
-                },
-            });
-
-            await tx.consultantEarning.create({
-                data: {
-                    consultantId: consultantProfile.id,
-                    callId: call.id,
-                    minutes: billedMinutes,             // ✅ FIX: Int — was decimal before
-                    grossAmount: totalCost,
-                    consultantShare,
-                    platformShare,
-                    isPaidOut: false,
-                },
-            });
+            if (totalCost > 0) {
+                const billedMinutes = Math.max(1, Math.ceil(finalDurationSeconds / 60));
+                await tx.consultantEarning.create({
+                    data: {
+                        consultantId: consultantProfile.id,
+                        callId: call.id,
+                        minutes: billedMinutes,
+                        grossAmount: totalCost,
+                        consultantShare,
+                        platformShare,
+                        isPaidOut: false,
+                    },
+                }).catch((e) => {
+                    log.warn(`ConsultantEarning skipped for call ${callId}: ${e.message}`);
+                });
+            }
         });
+
+        remainderCost = totalCost - alreadyBilledCost;
 
         // Create session record
         try {
@@ -639,16 +786,16 @@ class CallService {
             durationSeconds: finalDurationSeconds,
             totalCost,
             sessionId: session?.id,
+            reason,
         });
 
-        // ✅ FIX: Also emit to the person who ended the call
-        // This ensures both modals close properly via socket
         emitCallEnded(userId, {
             callId: call.id,
             endedBy: userId,
             durationSeconds: finalDurationSeconds,
             totalCost,
             sessionId: session?.id,
+            reason,
         });
 
         log.info(

@@ -1,7 +1,7 @@
 import { catchAsync } from '../../shared/globals/decorators/catch-async.js';
 import { ResponseHandler } from '../../shared/globals/helpers/response.handler.js';
 import { paymentService } from './payment.service.js';
-import { createCheckoutSchema, verifyPaymentSchema } from './payment.validation.js';
+import { createCheckoutSchema, verifyPaymentSchema, paymentMethodsQuerySchema } from './payment.validation.js';
 
 class PaymentController {
   createCheckout = catchAsync(async (req, res) => {
@@ -166,6 +166,12 @@ class PaymentController {
   getAllPayments = catchAsync(async (req, res) => {
     const result = await paymentService.getAllPayments(req.query);
     ResponseHandler.success(res, { message: 'All payments fetched', data: result });
+  });
+
+  getPaymentMethods = catchAsync(async (req, res) => {
+    const { amount } = paymentMethodsQuerySchema.parse(req.query);
+    const result = await paymentService.getPaymentMethods(amount);
+    ResponseHandler.success(res, { message: 'Payment methods fetched', data: result });
   });
 }
 

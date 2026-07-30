@@ -17,7 +17,7 @@ import cookieParser from 'cookie-parser';
 import { config } from './config/config.js';
 import applicationRoutes from './routes/index.js';
 import { Logger } from './config/logger.js';
-import { CustomError } from './shared/globals/helpers/error-handler.js';
+import { CustomError, ZodValidationError } from './shared/globals/helpers/error-handler.js';
 import { initSocket } from './socket/index.js';
 
 // Get __dirname equivalent in ES modules
@@ -539,6 +539,10 @@ export class Server {
 
       if (error instanceof CustomError) {
         return res.status(error.statusCode).json(error.serializeErrors());
+      }
+
+      if (error.name === 'ZodError' && Array.isArray(error.errors)) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json(new ZodValidationError(error).serializeErrors());
       }
 
       if (error.name === 'JsonWebTokenError') {

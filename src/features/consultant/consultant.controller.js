@@ -1,12 +1,15 @@
 // src/features/consultant/consultant.controller.js
 import { Logger } from '../../config/logger.js';
 import { catchAsync } from '../../shared/globals/decorators/catch-async.js';
+import { NotFoundError } from '../../shared/globals/helpers/error-handler.js';
 import { ResponseHandler } from '../../shared/globals/helpers/response.handler.js';
 import { consultantService } from './consultant.service.js';
 import {
     updateConsultantProfileSchema,
     updateOnlineStatusSchema,
     approveConsultantSchema,
+    updateVerificationInfoSchema,
+    reviewVerificationSchema,
 } from './consultant.validation.js';
 
 class ConsultantController {
@@ -19,7 +22,7 @@ class ConsultantController {
         const userId = req.user.id;
         const profile = await consultantService.getConsultantProfile(userId);
 
-        if (!profile) throw new Error('Consultant profile not found');
+        if (!profile) throw new NotFoundError('Consultant profile not found');
 
         ResponseHandler.success(res, {
             message: 'Consultant profile fetched successfully',
@@ -66,7 +69,7 @@ class ConsultantController {
         const { id } = req.params;
         const consultant = await consultantService.getConsultantById(id);
 
-        if (!consultant) throw new Error('Consultant not found');
+        if (!consultant) throw new NotFoundError('Consultant not found');
 
         ResponseHandler.success(res, {
             message: 'Consultant fetched successfully',
@@ -122,17 +125,42 @@ class ConsultantController {
     downloadInvoice = catchAsync(async (req, res) => {
         const userId = req.user.id;
         const { year, month } = req.params;
-        const { filename, content } = await consultantService.getInvoiceDownload(userId, year, month);
-        res.setHeader('Content-Type', 'text/csv');
+        const { filename, buffer, contentType } = await consultantService.getInvoiceDownload(userId, year, month);
+        res.setHeader('Content-Type', contentType || 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.send(content);
+        res.send(buffer);
     });
 
     updateVerificationInfo = catchAsync(async (req, res) => {
         const userId = req.user.id;
-        const updated = await consultantService.updateVerificationInfo(userId, req.body);
+        const existing = await consultantService.getConsultantProfile(userId);
+
+        const data = updateVerificationInfoSchema.parse({
+            ...req.body,
+            idFrontUrl: req.body.idFrontUrl || existing?.idFrontUrl,
+            idBackUrl: req.body.idBackUrl || existing?.idBackUrl,
+        });
+        const updated = await consultantService.updateVerificationInfo(userId, data);
         ResponseHandler.updated(res, {
             message: 'Verification information submitted successfully',
+            data: { consultant: updated },
+        });
+    });
+
+    getPendingVerifications = catchAsync(async (req, res) => {
+        const consultants = await consultantService.getPendingVerifications();
+        ResponseHandler.success(res, {
+            message: 'Pending verifications fetched',
+            data: { consultants },
+        });
+    });
+
+    reviewVerification = catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const payload = reviewVerificationSchema.parse(req.body);
+        const updated = await consultantService.reviewVerification(id, payload);
+        ResponseHandler.updated(res, {
+            message: `Verification ${payload.status.toLowerCase()}`,
             data: { consultant: updated },
         });
     });

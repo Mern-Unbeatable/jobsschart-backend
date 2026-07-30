@@ -7,6 +7,24 @@ import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/glo
 const log = new Logger('PaymentService');
 const MOLLIE_API_BASE = 'https://api.mollie.com/v2';
 
+/** Preferred order for NL/BE checkout (iDEAL, Bancontact first) */
+const METHOD_DISPLAY_ORDER = [
+  'ideal',
+  'bancontact',
+  'creditcard',
+  'paypal',
+  'applepay',
+  'googlepay',
+  'banktransfer',
+  'klarnapaylater',
+  'klarnapaynow',
+  'klarnasliceit',
+  'giftcard',
+  'paysafecard',
+];
+
+const ALLOWED_PAYMENT_METHODS = new Set(METHOD_DISPLAY_ORDER);
+
 // Flat delivery fee — WEBSHOP checkouts only.
 const WEBSHOP_DELIVERY_FEE = 15.00;
 
@@ -81,22 +99,31 @@ class PaymentService {
     return null;
   }
 
-  async _createMolliePayment({ amount, description, redirectUrl, webhookUrl, metadata }) {
+  async _createMolliePayment({ amount, description, redirectUrl, webhookUrl, metadata, paymentMethod }) {
     this._assertMollieConfigured();
+
+    const currency = config.MOLLIE_CURRENCY || 'EUR';
+    const payload = {
+      amount: {
+        currency,
+        value: this._toMollieAmount(amount),
+      },
+      description,
+      redirectUrl,
+      webhookUrl,
+      metadata,
+      locale: config.MOLLIE_LOCALE || 'nl_NL',
+    };
+
+    // When omitted, Mollie hosted checkout shows all activated methods (iDEAL, Bancontact, card, etc.)
+    if (paymentMethod && ALLOWED_PAYMENT_METHODS.has(paymentMethod)) {
+      payload.method = paymentMethod;
+    }
 
     try {
       const response = await axios.post(
         `${MOLLIE_API_BASE}/payments`,
-        {
-          amount: {
-            currency: 'CHF',
-            value: this._toMollieAmount(amount),
-          },
-          description,
-          redirectUrl,
-          webhookUrl,
-          metadata,
-        },
+        payload,
         {
           headers: this._mollieHeaders(),
         },
@@ -107,6 +134,50 @@ class PaymentService {
       const mollieMessage = error?.response?.data?.detail || error?.response?.data?.title || error.message;
       log.error(`Mollie create payment failed [mode=${this._mollieMode()}]: ${mollieMessage}`);
       throw new BadRequestError(`Mollie payment create failed: ${mollieMessage}`);
+    }
+  }
+
+  /** List Mollie payment methods available for a given amount (EUR required for iDEAL/Bancontact). */
+  async getPaymentMethods(amount = 10) {
+    this._assertMollieConfigured();
+
+    const currency = config.MOLLIE_CURRENCY || 'EUR';
+    const value = this._toMollieAmount(amount);
+
+    try {
+      const response = await axios.get(`${MOLLIE_API_BASE}/methods`, {
+        params: {
+          'amount[currency]': currency,
+          'amount[value]': value,
+          locale: config.MOLLIE_LOCALE || 'nl_NL',
+          include: 'issuers',
+        },
+        headers: this._mollieHeaders(),
+      });
+
+      const methods = response.data?._embedded?.methods || [];
+
+      const sorted = [...methods].sort((a, b) => {
+        const ai = METHOD_DISPLAY_ORDER.indexOf(a.id);
+        const bi = METHOD_DISPLAY_ORDER.indexOf(b.id);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      });
+
+      return {
+        currency,
+        amount: value,
+        methods: sorted.map((m) => ({
+          id: m.id,
+          description: m.description,
+          image: m.image?.svg || m.image?.size2x || m.image?.size1x || null,
+          minimumAmount: m.minimumAmount || null,
+          maximumAmount: m.maximumAmount || null,
+        })),
+      };
+    } catch (error) {
+      const mollieMessage = error?.response?.data?.detail || error?.response?.data?.title || error.message;
+      log.error(`Mollie list methods failed: ${mollieMessage}`);
+      throw new BadRequestError(`Could not load payment methods: ${mollieMessage}`);
     }
   }
 
@@ -206,6 +277,7 @@ class PaymentService {
     cartItems,
     shippingAddress,
     phone,
+    paymentMethod,
   }) {
     await this._ensureWallet(userId);
 
@@ -353,9 +425,10 @@ class PaymentService {
       redirectUrl: `${clientUrl}/payment/success?type=${type}`,
       webhookUrl,
       metadata,
+      paymentMethod: paymentMethod && ALLOWED_PAYMENT_METHODS.has(paymentMethod) ? paymentMethod : undefined,
     });
 
-    log.info(`Mollie payment mode=${this._mollieMode()} id=${molliePayment.id}`);
+    log.info(`Mollie payment mode=${this._mollieMode()} currency=${config.MOLLIE_CURRENCY} id=${molliePayment.id}`);
 
     const checkoutUrl = molliePayment?._links?.checkout?.href;
     if (!checkoutUrl) {
