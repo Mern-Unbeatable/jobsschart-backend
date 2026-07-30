@@ -436,6 +436,7 @@ class CallService {
             consultantAvatar: consultantUser?.avatar,
             roomName: call.roomUrl,
             token: userToken,
+            callType: call.callType,
             actualStartTime: actualStartTime.toISOString()
         });
 
