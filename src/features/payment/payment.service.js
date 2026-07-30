@@ -15,125 +15,6 @@ const WEBSHOP_DELIVERY_FEE = 15.00;
 const WEBSHOP_DELIVERY_FEE = 15.00;
 
 class PaymentService {
-  _assertMollieConfigured() {
-    if (!config.MOLLIE_API_KEY) {
-      throw new Error('Mollie API key is missing. Set MOLLIE_API_KEY_LIVE or MOLLIE_API_KEY_TEST');
-    }
-  }
-
-  _mollieMode() {
-    if (typeof config.MOLLIE_API_KEY !== 'string') return 'none';
-    if (config.MOLLIE_API_KEY.startsWith('test_')) return 'test';
-    if (config.MOLLIE_API_KEY.startsWith('live_')) return 'live';
-    return 'unknown';
-  }
-
-  _mollieHeaders() {
-    return {
-      Authorization: `Bearer ${config.MOLLIE_API_KEY}`,
-      'Content-Type': 'application/json',
-    };
-  }
-
-  _toMollieAmount(value) {
-    const num = Number(value || 0);
-    return num.toFixed(2);
-  }
-
-  _normalizePaymentAmountFromSession(payment) {
-    const total = Number(payment?.amount?.value ?? 0);
-    return Number.isFinite(total) ? total : 0;
-  }
-
-  _buildWebhookUrl() {
-    if (config.MOLLIE_WEBHOOK_URL) return config.MOLLIE_WEBHOOK_URL;
-    if (config.BACKEND_URL) return `${config.BACKEND_URL}/api/v1/payments/webhook`;
-    return 'http://localhost:5000/api/v1/payments/webhook';
-  }
-
-  _extractWebhookPaymentId(rawBody) {
-    if (!rawBody) return null;
-
-    if (Buffer.isBuffer(rawBody)) {
-      const asText = rawBody.toString('utf8').trim();
-      if (!asText) return null;
-      try {
-        const parsed = JSON.parse(asText);
-        return parsed?.id || null;
-      } catch {
-        const params = new URLSearchParams(asText);
-        return params.get('id');
-      }
-    }
-
-    if (typeof rawBody === 'string') {
-      const trimmed = rawBody.trim();
-      if (!trimmed) return null;
-      try {
-        const parsed = JSON.parse(trimmed);
-        return parsed?.id || null;
-      } catch {
-        const params = new URLSearchParams(trimmed);
-        return params.get('id');
-      }
-    }
-
-    if (typeof rawBody === 'object') {
-      return rawBody.id || null;
-    }
-
-    return null;
-  }
-
-  async _createMolliePayment({ amount, description, redirectUrl, webhookUrl, metadata }) {
-    this._assertMollieConfigured();
-
-    try {
-      const response = await axios.post(
-        `${MOLLIE_API_BASE}/payments`,
-        {
-          amount: {
-            currency: 'CHF',
-            value: this._toMollieAmount(amount),
-          },
-          description,
-          redirectUrl,
-          webhookUrl,
-          metadata,
-        },
-        {
-          headers: this._mollieHeaders(),
-        },
-      );
-
-      return response.data;
-    } catch (error) {
-      const mollieMessage = error?.response?.data?.detail || error?.response?.data?.title || error.message;
-      log.error(`Mollie create payment failed [mode=${this._mollieMode()}]: ${mollieMessage}`);
-      throw new BadRequestError(`Mollie payment create failed: ${mollieMessage}`);
-    }
-  }
-
-  async _getMolliePayment(paymentId) {
-    this._assertMollieConfigured();
-
-    try {
-      const response = await axios.get(`${MOLLIE_API_BASE}/payments/${paymentId}`, {
-        headers: this._mollieHeaders(),
-      });
-
-      return response.data;
-    } catch (error) {
-      const mollieMessage = error?.response?.data?.detail || error?.response?.data?.title || error.message;
-      log.error(`Mollie get payment failed [mode=${this._mollieMode()}] paymentId=${paymentId}: ${mollieMessage}`);
-      throw new BadRequestError(`Mollie payment lookup failed: ${mollieMessage}`);
-    }
-  }
-
-  _isMolliePaid(payment) {
-    return payment?.status === 'paid';
-  }
-
   async _getPaymentBySessionId(sessionId) {
     return prisma.payment.findFirst({
       where: { stripeSessionId: sessionId },
@@ -445,41 +326,15 @@ class PaymentService {
     await this._runPostPaymentActions(type, paymentData);
   }
 
-  async _runPostPaymentActions(type, paymentData) {
-    if (type === 'PACKAGE') {
-      await this._savePackagePurchase(paymentData);
-      return;
-    }
-    if (type === 'DONATION') {
-      await this._saveDonation(paymentData);
-      return;
-    }
-    if (type === 'WEBSHOP') {
-      await this._saveOrder(paymentData);
-      return;
-    }
-
-    throw new BadRequestError(`Unsupported payment type: ${type}`);
-  }
-
-  async _savePackagePurchase(paymentData) {
-    const payment = await this._getPaymentBySessionId(paymentData.id);
-    if (!payment) throw new NotFoundError(`Payment not found for payment ${paymentData.id}`);
-
-    const existingPurchase = await prisma.packagePurchase.findFirst({
-      where: { stripeSessionId: paymentData.id },
-      select: { id: true },
-    });
-    if (existingPurchase) {
-      log.info(`Package purchase already linked for payment ${paymentData.id}`);
-      return;
-    }
+  async _savePackagePurchase(session) {
+    const payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
 
     const userId = payment.userId;
-    const packageId = paymentData.metadata?.packageId;
+    const packageId = session.metadata?.packageId;
 
     if (!packageId) {
-      throw new BadRequestError(`Missing packageId in metadata for payment ${paymentData.id}`);
+      throw new BadRequestError(`Missing packageId in metadata for session ${session.id}`);
     }
 
     const pkg = await prisma.package.findUnique({ where: { id: packageId } });
@@ -537,6 +392,20 @@ class PaymentService {
 
   async _saveDonation(session) {
     const m = session.metadata;
+    const payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
+
+    if (payment.donationId) {
+      log.info(`Donation already linked for session ${session.id} -> ${payment.donationId}`);
+      return;
+    }
+
+    const donorId = payment.userId;
+    const donationAmount = parseInt(m.donationAmount, 10);
+
+    if (!m.donorType || !m.donorName || !m.donorPhone || !m.donorEmail || !m.benefit || !Number.isFinite(donationAmount)) {
+      throw new BadRequestError('Invalid donation metadata for this Stripe session');
+    }
 
     await prisma.$transaction(async (tx) => {
       const donationData = {
@@ -586,6 +455,15 @@ class PaymentService {
 
   async _saveOrder(session) {
     const m = session.metadata;
+    const payment = await this._getPaymentBySessionId(session.id);
+    if (!payment) throw new NotFoundError(`Payment not found for session ${session.id}`);
+
+    if (payment.orderId) {
+      log.info(`Order already linked for session ${session.id} -> ${payment.orderId}`);
+      return;
+    }
+
+    const userId = payment.userId;
     const cartItems = JSON.parse(m.cartItems);
 
     let shippingAddress = null;
@@ -689,12 +567,20 @@ class PaymentService {
       }
     });
 
-    log.info(`Order created for user ${m.userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
+    log.info(`Order created for user ${userId} — ${orderItemsData.length} items, delivery fee ${deliveryFee}`);
   }
 
   async verifyAndUnlock(sessionId, userId) {
-    const paymentData = await this._getMolliePayment(sessionId);
-    let payment = await this._getPaymentBySessionId(sessionId);
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const payment = await this._getPaymentBySessionId(sessionId);
+
+    if (!payment) {
+      throw new NotFoundError('Payment record not found for this session');
+    }
+
+    if (payment.userId !== userId) {
+      throw new ForbiddenError('You are not authorized to verify this payment');
+    }
 
     if (!payment) {
       payment = await this._recreatePaymentFromSession(paymentData, userId);
@@ -710,13 +596,21 @@ class PaymentService {
 
     const existing = payment.status === 'SUCCESS';
 
-    const updateResult = await prisma.payment.updateMany({
-      where: { stripeSessionId: sessionId, userId, status: 'PENDING' },
-      data: { status: 'SUCCESS', stripePaymentIntentId: paymentData.id },
-    });
+    if (!existing) {
+      const type = payment.type;
 
-    if (updateResult.count === 0 && !existing) {
-      log.warn(`Verify skipped payment status update for session ${sessionId}`);
+      const updateResult = await prisma.payment.updateMany({
+        where: { stripeSessionId: sessionId, userId, status: 'PENDING' },
+        data: { status: 'SUCCESS', stripePaymentIntentId: session.payment_intent || '' },
+      });
+
+      if (updateResult.count === 0) {
+        log.warn(`Verify skipped: payment already processed or missing PENDING row for session ${sessionId}`);
+      }
+
+      if (type === 'PACKAGE') await this._savePackagePurchase(session);
+      if (type === 'DONATION') await this._saveDonation(session);
+      if (type === 'WEBSHOP') await this._saveOrder(session);
     }
 
     await this._runPostPaymentActions(payment.type, paymentData);
