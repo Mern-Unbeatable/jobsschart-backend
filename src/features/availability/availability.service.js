@@ -33,6 +33,27 @@ class AvailabilityService {
         return order[dayOfWeek];
     }
 
+    getDayOfWeekFromDateStr(dateStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const dayIndex = new Date(year, month - 1, day).getDay();
+        const names = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+        return names[dayIndex];
+    }
+
+    parseSlotDateTime(dateStr, timeStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const [hours, minutes] = timeStr.split(':').map(Number);
+        return new Date(year, month - 1, day, hours, minutes, 0, 0);
+    }
+
+    getDayBounds(dateStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        return {
+            dayStart: new Date(year, month - 1, day, 0, 0, 0, 0),
+            dayEnd: new Date(year, month - 1, day, 23, 59, 59, 999),
+        };
+    }
+
     async getConsultantByUserId(userId) {
         return prisma.consultant.findUnique({
             where: { userId },
@@ -48,6 +69,53 @@ class AvailabilityService {
     getTimeInMinutes(time) {
         const [hours, minutes] = time.split(':').map(Number);
         return (hours * 60) + minutes;
+    }
+
+    minutesToTime(totalMinutes) {
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    }
+
+    /**
+     * Split weekly windows into bookable chunks and exclude overlaps + past times.
+     */
+    buildBookableSlots(weeklySlotsForDay, dateStr, existingBookings = [], slotDurationMinutes = 30) {
+        const bookable = [];
+        const now = new Date();
+
+        for (const slot of weeklySlotsForDay) {
+            const windowStart = this.getTimeInMinutes(slot.startTime);
+            const windowEnd = this.getTimeInMinutes(slot.endTime);
+
+            for (let startMin = windowStart; startMin + slotDurationMinutes <= windowEnd; startMin += slotDurationMinutes) {
+                const endMin = startMin + slotDurationMinutes;
+                const startTime = this.minutesToTime(startMin);
+                const endTime = this.minutesToTime(endMin);
+                const startDateTime = this.parseSlotDateTime(dateStr, startTime);
+                const endDateTime = this.parseSlotDateTime(dateStr, endTime);
+
+                if (startDateTime <= now) continue;
+
+                const isBooked = existingBookings.some((booking) => {
+                    const bStart = new Date(booking.startTime);
+                    const bEnd = new Date(booking.endTime);
+                    return startDateTime < bEnd && endDateTime > bStart;
+                });
+
+                if (!isBooked) {
+                    bookable.push({
+                        id: `${slot.id}-${startTime}-${endTime}`,
+                        slotId: slot.id,
+                        startTime,
+                        endTime,
+                        durationMinutes: slotDurationMinutes,
+                    });
+                }
+            }
+        }
+
+        return bookable;
     }
 
     /**
@@ -203,17 +271,35 @@ class AvailabilityService {
 
         // If specific date is requested, filter slots for that date
         if (options.date) {
-            const targetDate = new Date(options.date);
-            const dayOfWeek = targetDate.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+            const dayOfWeek = this.getDayOfWeekFromDateStr(options.date);
 
             const availableSlotsForDate = weeklySlots.filter(
-                slot => slot.dayOfWeek === dayOfWeek && slot.isActive
+                (slot) => slot.dayOfWeek === dayOfWeek && slot.isActive
+            );
+
+            const { dayStart, dayEnd } = this.getDayBounds(options.date);
+
+            const existingBookings = await prisma.schedule.findMany({
+                where: {
+                    consultantId: consultant.id,
+                    status: { in: ['PENDING', 'CONFIRMED'] },
+                    startTime: { lt: dayEnd },
+                    endTime: { gt: dayStart },
+                },
+                select: { id: true, startTime: true, endTime: true, status: true },
+            });
+
+            const bookableSlots = this.buildBookableSlots(
+                availableSlotsForDate,
+                options.date,
+                existingBookings,
             );
 
             return {
                 date: options.date,
                 dayOfWeek,
                 availableSlots: availableSlotsForDate,
+                bookableSlots,
                 weeklySlots,
             };
         }

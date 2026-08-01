@@ -2,6 +2,7 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import nodemailer from 'nodemailer';
+import { notifyBookingCancelled } from '../../socket/index.js';
 
 const log = new Logger('ScheduleService');
 
@@ -20,6 +21,16 @@ class ScheduleService {
     getTimeInMinutes(time) {
         const [hours, minutes] = time.split(':').map(Number);
         return (hours * 60) + minutes;
+    }
+
+    /**
+     * Flat reservation fee for schedule bookings (not per-minute for the full slot window).
+     */
+    getScheduleBookingFee(consultant) {
+        if (consultant?.firstNPrice != null) {
+            return Number(consultant.firstNPrice);
+        }
+        return Number(consultant?.pricePerMinute || 2.5);
     }
 
     async isTimeSlotAvailable(consultantId, startDateTime, durationMinutes, excludeBookingId = null) {
@@ -158,14 +169,34 @@ class ScheduleService {
 
         if (!wallet) throw new Error('Wallet not found');
 
-        const durationMinutes = (endDateTime - startDateTime) / (1000 * 60);
-        let totalCost = Number(consultant.pricePerMinute) * durationMinutes;
+        const totalCost = Number(this.getScheduleBookingFee(consultant).toFixed(2));
 
-        if (consultant.firstNMinutes && durationMinutes <= consultant.firstNMinutes) {
-            totalCost = consultant.firstNPrice ? Number(consultant.firstNPrice) : totalCost;
+        if (Number(wallet.creditBalance) < totalCost) {
+            throw new Error(
+                `Insufficient balance. Required: €${totalCost.toFixed(2)}, Available: €${Number(wallet.creditBalance).toFixed(2)}`
+            );
         }
 
         const result = await prisma.$transaction(async (tx) => {
+            const balanceBefore = Number(wallet.creditBalance);
+            const balanceAfter = Number((balanceBefore - totalCost).toFixed(2));
+
+            await tx.wallet.update({
+                where: { userId },
+                data: { creditBalance: balanceAfter },
+            });
+
+            await tx.creditTransaction.create({
+                data: {
+                    userId,
+                    transactionType: 'ADJUSTMENT',
+                    amount: -totalCost,
+                    balanceBefore,
+                    balanceAfter,
+                    description: `Booking with ${consultant.user?.name || 'consultant'} on ${bookingDate} ${startTime}-${endTime}`,
+                },
+            });
+
             const schedule = await tx.schedule.create({
                 data: {
                     userId,
@@ -411,35 +442,63 @@ class ScheduleService {
     }
 
     async cancelBookingByConsultant(bookingId, userId, role) {
-        return this.updateBookingStatus(bookingId, userId, role, 'CANCELLED');
-    }
-
-    async cancelBooking(bookingId, userId, role) {
         const booking = await prisma.schedule.findUnique({
             where: { id: bookingId },
-            include: { consultant: true },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        username: true,
+                        avatar: true,
+                        email: true,
+                        phone: true,
+                    },
+                },
+                consultant: {
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                name: true,
+                                username: true,
+                                avatar: true,
+                            },
+                        },
+                    },
+                },
+            },
         });
 
         if (!booking) throw new Error('Booking not found');
 
-        const isOwner = booking.userId === userId;
         const isConsultant = booking.consultant.userId === userId;
+        const isAdmin = role === 'ADMIN';
 
-        if (role !== 'ADMIN' && !isOwner && !isConsultant) {
-            throw new Error('Unauthorized to cancel this booking');
+        if (!isConsultant && !isAdmin) {
+            throw new Error('Only the consultant can cancel this booking');
+        }
+
+        if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED') {
+            throw new Error('Booking cannot be cancelled now');
         }
 
         const now = new Date();
-        const isBeforeStart = now < booking.startTime;
+        const isBeforeStart = now < new Date(booking.startTime);
         let refundAmount = 0;
 
-        if (isOwner && isBeforeStart && booking.status !== 'CANCELLED') {
-            const durationMinutes = (booking.endTime - booking.startTime) / (1000 * 60);
-            refundAmount = booking.consultant.pricePerMinute * durationMinutes;
+        if (isBeforeStart) {
+            refundAmount = this.getScheduleBookingFee(booking.consultant);
         }
 
-        return await prisma.$transaction(async (tx) => {
-            const updatedBooking = await tx.schedule.update({
+        const bookingDateLabel = new Date(booking.startTime).toLocaleString('en-US', {
+            dateStyle: 'full',
+            timeStyle: 'short',
+        });
+        const consultantName = booking.consultant?.user?.name || 'your consultant';
+
+        const updatedBooking = await prisma.$transaction(async (tx) => {
+            const updated = await tx.schedule.update({
                 where: { id: bookingId },
                 data: { status: 'CANCELLED' },
                 include: {
@@ -470,47 +529,245 @@ class ScheduleService {
 
             if (refundAmount > 0) {
                 const wallet = await tx.wallet.findUnique({
-                    where: { userId },
+                    where: { userId: booking.userId },
                 });
 
-                const balanceBefore = wallet.creditBalance;
-                const balanceAfter = balanceBefore + refundAmount;
+                if (wallet) {
+                    const balanceBefore = Number(wallet.creditBalance);
+                    const balanceAfter = balanceBefore + refundAmount;
 
-                await tx.wallet.update({
-                    where: { userId },
-                    data: { creditBalance: balanceAfter },
-                });
+                    await tx.wallet.update({
+                        where: { userId: booking.userId },
+                        data: { creditBalance: balanceAfter },
+                    });
 
-                await tx.creditTransaction.create({
+                    await tx.creditTransaction.create({
+                        data: {
+                            userId: booking.userId,
+                            transactionType: 'REFUND',
+                            amount: refundAmount,
+                            balanceBefore,
+                            balanceAfter,
+                            description: `Refund for appointment cancelled by consultant (${bookingId})`,
+                        },
+                    });
+                }
+            }
+
+            await tx.notification.create({
+                data: {
+                    userId: booking.userId,
+                    type: 'SYSTEM',
+                    title: 'Appointment Cancelled',
+                    message: `Your appointment with ${consultantName} on ${bookingDateLabel} was cancelled by the consultant.`,
                     data: {
-                        userId,
-                        transactionType: 'REFUND',
-                        amount: refundAmount,
-                        balanceBefore,
-                        balanceAfter,
-                        description: `Refund for cancelled booking ${bookingId}`,
+                        bookingId: booking.id,
+                        consultantId: booking.consultantId,
+                        cancelledBy: 'consultant',
+                        refundAmount,
+                    },
+                },
+            });
+
+            return updated;
+        });
+
+        if (updatedBooking.user?.email) {
+            transporter.sendMail({
+                from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: updatedBooking.user.email,
+                subject: 'Your appointment has been cancelled',
+                html: `<p>Hello ${updatedBooking.user.name || 'there'},</p>
+                       <p>We regret to inform you that your appointment with <strong>${consultantName}</strong> scheduled for <strong>${bookingDateLabel}</strong> has been cancelled by the consultant.</p>
+                       ${refundAmount > 0 ? `<p>A refund of <strong>€${Number(refundAmount).toFixed(2)}</strong> has been credited to your wallet.</p>` : ''}
+                       <p>You can book a new appointment at any time from your dashboard.</p>
+                       <p>Thank you,<br/>Illorac Team</p>`,
+            }).catch((err) => log.error(`Consultant cancel notification email failed: ${err.message}`));
+        }
+
+        notifyBookingCancelled(booking.userId, {
+            bookingId: booking.id,
+            title: 'Appointment Cancelled',
+            message: `Your appointment with ${consultantName} on ${bookingDateLabel} was cancelled by the consultant.${
+                refundAmount > 0 ? ` A refund of €${Number(refundAmount).toFixed(2)} has been credited to your wallet.` : ''
+            }`,
+            refundAmount,
+            cancelledBy: 'consultant',
+        });
+
+        return updatedBooking;
+    }
+
+    async cancelBooking(bookingId, userId, role) {
+        const booking = await prisma.schedule.findUnique({
+            where: { id: bookingId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        username: true,
+                        avatar: true,
+                        email: true,
+                        phone: true,
+                    },
+                },
+                consultant: {
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                name: true,
+                                username: true,
+                                avatar: true,
+                                email: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!booking) throw new Error('Booking not found');
+
+        const isOwner = booking.userId === userId;
+        const isConsultant = booking.consultant.userId === userId;
+
+        if (role !== 'ADMIN' && !isOwner && !isConsultant) {
+            throw new Error('Unauthorized to cancel this booking');
+        }
+
+        if (booking.status === 'CANCELLED' || booking.status === 'COMPLETED') {
+            throw new Error('Booking cannot be cancelled now');
+        }
+
+        const now = new Date();
+        const isBeforeStart = now < new Date(booking.startTime);
+        let refundAmount = 0;
+
+        if (isOwner && isBeforeStart) {
+            refundAmount = this.getScheduleBookingFee(booking.consultant);
+        }
+
+        const bookingDateLabel = new Date(booking.startTime).toLocaleString('en-US', {
+            dateStyle: 'full',
+            timeStyle: 'short',
+        });
+        const clientName = booking.user?.name || booking.user?.username || 'Client';
+        const consultantName = booking.consultant?.user?.name || 'Consultant';
+        const consultantUserId = booking.consultant.userId;
+
+        const updatedBooking = await prisma.$transaction(async (tx) => {
+            const updated = await tx.schedule.update({
+                where: { id: bookingId },
+                data: { status: 'CANCELLED' },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            name: true,
+                            username: true,
+                            avatar: true,
+                            email: true,
+                            phone: true,
+                        },
+                    },
+                    consultant: {
+                        include: {
+                            user: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    username: true,
+                                    avatar: true,
+                                    email: true,
+                                },
+                            },
+                        },
+                    },
+                },
+            });
+
+            if (refundAmount > 0) {
+                const wallet = await tx.wallet.findUnique({
+                    where: { userId: booking.userId },
+                });
+
+                if (wallet) {
+                    const balanceBefore = Number(wallet.creditBalance);
+                    const balanceAfter = balanceBefore + refundAmount;
+
+                    await tx.wallet.update({
+                        where: { userId: booking.userId },
+                        data: { creditBalance: balanceAfter },
+                    });
+
+                    await tx.creditTransaction.create({
+                        data: {
+                            userId: booking.userId,
+                            transactionType: 'REFUND',
+                            amount: refundAmount,
+                            balanceBefore,
+                            balanceAfter,
+                            description: `Refund for cancelled booking ${bookingId}`,
+                        },
+                    });
+                }
+            }
+
+            if (isOwner) {
+                await tx.notification.create({
+                    data: {
+                        userId: consultantUserId,
+                        type: 'SYSTEM',
+                        title: 'Appointment Cancelled',
+                        message: `${clientName} cancelled their appointment scheduled for ${bookingDateLabel}.`,
+                        data: {
+                            bookingId: booking.id,
+                            consultantId: booking.consultantId,
+                            cancelledBy: 'user',
+                        },
                     },
                 });
             }
 
-            if (updatedBooking.user?.email) {
-                const bookingDate = new Date(updatedBooking.startTime).toLocaleString('en-US', {
-                    dateStyle: 'full',
-                    timeStyle: 'short',
-                });
-                transporter.sendMail({
-                    from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-                    to: updatedBooking.user.email,
-                    subject: 'Your appointment has been cancelled',
-                    html: `<p>Hello ${updatedBooking.user.name || 'there'},</p>
-                           <p>Your appointment with <strong>${updatedBooking.consultant?.user?.name || 'your consultant'}</strong> scheduled for <strong>${bookingDate}</strong> has been cancelled.</p>
-                           ${refundAmount > 0 ? `<p>A refund of €${Number(refundAmount).toFixed(2)} has been credited to your wallet.</p>` : ''}
-                           <p>Thank you,<br/>Illorac Team</p>`,
-                }).catch(err => log.error(`Cancel notification email failed: ${err.message}`));
-            }
-
-            return updatedBooking;
+            return updated;
         });
+
+        if (isOwner && updatedBooking.user?.email) {
+            transporter.sendMail({
+                from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: updatedBooking.user.email,
+                subject: 'Your appointment has been cancelled',
+                html: `<p>Hello ${updatedBooking.user.name || 'there'},</p>
+                       <p>Your appointment with <strong>${consultantName}</strong> scheduled for <strong>${bookingDateLabel}</strong> has been cancelled.</p>
+                       ${refundAmount > 0 ? `<p>A refund of <strong>€${Number(refundAmount).toFixed(2)}</strong> has been credited to your wallet.</p>` : ''}
+                       <p>Thank you,<br/>Illorac Team</p>`,
+            }).catch((err) => log.error(`User cancel confirmation email failed: ${err.message}`));
+        }
+
+        if (isOwner && updatedBooking.consultant?.user?.email) {
+            transporter.sendMail({
+                from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: updatedBooking.consultant.user.email,
+                subject: 'Appointment cancelled by client',
+                html: `<p>Hello ${consultantName},</p>
+                       <p><strong>${clientName}</strong> has cancelled their appointment scheduled for <strong>${bookingDateLabel}</strong>.</p>
+                       <p>You can view your updated schedule from your consultant dashboard.</p>
+                       <p>Thank you,<br/>Illorac Team</p>`,
+            }).catch((err) => log.error(`Consultant cancel notification email failed: ${err.message}`));
+        }
+
+        if (isOwner) {
+            notifyBookingCancelled(consultantUserId, {
+                bookingId: booking.id,
+                title: 'Appointment Cancelled',
+                message: `${clientName} cancelled their appointment on ${bookingDateLabel}.`,
+                cancelledBy: 'user',
+            });
+        }
+
+        return updatedBooking;
     }
 
     async getConsultantByUserId(userId) {

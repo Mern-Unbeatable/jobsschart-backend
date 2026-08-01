@@ -174,7 +174,6 @@ class CallService {
                     consultantId: consultantUserId,
                     callType: callTypeNorm,
                     status: 'PENDING',
-                    startTime: new Date(),
                     roomUrl: roomName,
                 },
                 include: {
@@ -218,7 +217,7 @@ class CallService {
                     roomName,
                     status: call.status.toLowerCase(),
                     callType: call.callType,
-                    startTime: call.startTime,
+                    startTime: null,
                 },
                 tokens: {
                     user: { token: userToken, identity: user.name || user.email },
@@ -530,9 +529,10 @@ class CallService {
                 },
             });
         } else if (call.status === 'PENDING') {
+            startTime = new Date();
             await prisma.call.update({
                 where: { id: callId },
-                data: { status: 'ACTIVE' },
+                data: { status: 'ACTIVE', startTime },
             });
         }
 
@@ -786,6 +786,7 @@ class CallService {
             endedBy: userId,
             durationSeconds: finalDurationSeconds,
             totalCost,
+            serverStartTime: call.startTime ? new Date(call.startTime).toISOString() : null,
             sessionId: session?.id,
             reason,
         });
@@ -795,6 +796,7 @@ class CallService {
             endedBy: userId,
             durationSeconds: finalDurationSeconds,
             totalCost,
+            serverStartTime: call.startTime ? new Date(call.startTime).toISOString() : null,
             sessionId: session?.id,
             reason,
         });

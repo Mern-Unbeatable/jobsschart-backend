@@ -911,7 +911,8 @@ export async function prepareCallEnd(callId, endedByUserId, endTimestamp = Date.
         where: { id: callId },
         select: {
             id: true, userId: true, consultantId: true,
-            startTime: true, status: true, callType: true,
+            startTime: true, status: true, callType: true, totalCost: true,
+            consultant: { select: { consultant: { select: { pricePerMinute: true } } } },
         },
     });
 
@@ -921,11 +922,18 @@ export async function prepareCallEnd(callId, endedByUserId, endTimestamp = Date.
         ? Math.max(0, Math.floor((endTimestamp - new Date(call.startTime).getTime()) / 1000))
         : 0;
 
+    const ratePerMinute = Number(call.consultant?.consultant?.pricePerMinute || 2.5);
+    const estimatedTotalCost = durationSeconds > 0
+        ? Number(((durationSeconds / 60) * ratePerMinute).toFixed(2))
+        : parseFloat(call.totalCost || 0);
+
     const payload = {
         callId: call.id,
         endedBy: endedByUserId,
         endedAt: new Date(endTimestamp).toISOString(),
         durationSeconds,
+        totalCost: estimatedTotalCost,
+        serverStartTime: call.startTime ? new Date(call.startTime).toISOString() : null,
         callType: call.callType,
         status: 'ENDING',
     };
@@ -939,3 +947,9 @@ export async function prepareCallEnd(callId, endedByUserId, endTimestamp = Date.
 export const emitCallEnded = (userId, callData) => {
     if (io) io.to(`user_${userId}`).emit('call_ended', callData);
 };
+
+/** Notify customer when consultant cancels an appointment */
+export function notifyBookingCancelled(userId, payload) {
+    if (!io) return;
+    io.to(`user_${userId}`).emit('booking_cancelled', payload);
+}
