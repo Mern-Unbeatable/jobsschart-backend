@@ -11,6 +11,7 @@ import {
     ConflictError,
 } from '../../shared/globals/helpers/error-handler.js';
 import { prepareCallEnd, startCallBillingTimer, stopCallBillingTimer } from '../../socket/index.js';
+import { twilioService } from '../../shared/services/twilio.service.js';
 
 const log = new Logger('CallController');
 
@@ -164,6 +165,21 @@ class CallController {
         ResponseHandler.success(res, {
             message: 'Use /payout endpoints for earnings',
             data: { consultantId: consultant?.id },
+        });
+    });
+
+    getTwilioStatus = catchAsync(async (req, res) => {
+        if (!twilioService.isConfigured()) {
+            return ResponseHandler.success(res, {
+                message: 'Twilio Video is not configured',
+                data: { ok: false, reason: 'Missing TWILIO_ACCOUNT_SID, AUTH_TOKEN, API_KEY, or API_SECRET on server' },
+            });
+        }
+
+        const check = await twilioService.validateVideoCredentials();
+        ResponseHandler.success(res, {
+            message: check.ok ? 'Twilio Video credentials are valid' : 'Twilio Video credentials are invalid',
+            data: check,
         });
     });
 }

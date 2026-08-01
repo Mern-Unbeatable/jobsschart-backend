@@ -53,6 +53,10 @@ const startApplication = async () => {
         config.logger.info('Twilio Video credentials validated');
       } else {
         config.logger.error(`Twilio Video misconfigured: ${twilioCheck.reason}`);
+        config.logger.error(
+          'Calls will fail with "Invalid Access Token issuer/subject" until '
+          + 'TWILIO_ACCOUNT_SID, TWILIO_API_KEY, and TWILIO_API_SECRET are from the same Twilio account.'
+        );
       }
     } else {
       config.logger.warn('Twilio Video not configured — calls will fail until env vars are set');

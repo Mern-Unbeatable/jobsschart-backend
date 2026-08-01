@@ -12,6 +12,7 @@ router.post('/:callId/end', callController.endCall);
 router.post('/:callId/cancel', callController.cancelCall);
 
 router.get('/pending', callController.getPendingCalls);
+router.get('/twilio-status', callController.getTwilioStatus);
 router.get('/history', callController.getCallHistory);
 router.get('/earnings', callController.getConsultantEarnings);
 router.get('/:callId', callController.getCallById);

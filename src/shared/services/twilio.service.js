@@ -67,24 +67,30 @@ class TwilioService {
                 return { ok: false, reason: 'TWILIO_ACCOUNT_SID is not valid for TWILIO_AUTH_TOKEN' };
             }
         } catch (err) {
-            return {
-                ok: false,
-                reason: `TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN rejected by Twilio: ${err.message}`,
-            };
+            if (!isTrialOrTestRestriction(err)) {
+                return {
+                    ok: false,
+                    reason: `TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN rejected by Twilio: ${err.message}`,
+                };
+            }
+            log.warn('Twilio trial account — skipping account fetch, verifying API Key instead');
         }
 
         try {
             await this.client.keys(TWILIO_API_KEY).fetch();
         } catch (err) {
-            if (err?.status === 404 || err?.code === 20404) {
+            if (isTrialOrTestRestriction(err)) {
+                log.warn('Twilio trial account — skipping API Key REST check, verifying JWT signing only');
+            } else if (err?.status === 404 || err?.code === 20404) {
                 return {
                     ok: false,
                     reason:
                         'TWILIO_API_KEY does not belong to TWILIO_ACCOUNT_SID. '
                         + 'Create a new API Key in the same Twilio project and update TWILIO_API_KEY + TWILIO_API_SECRET.',
                 };
+            } else {
+                return { ok: false, reason: `Could not verify API Key: ${err.message}` };
             }
-            return { ok: false, reason: `Could not verify API Key: ${err.message}` };
         }
 
         try {
@@ -107,7 +113,11 @@ class TwilioService {
     }
 
     generateAccessToken(userId, identity, roomName, _callType) {
-        if (!this.isConfigured()) {
+        const accountSid = config.TWILIO_ACCOUNT_SID?.trim();
+        const apiKey = config.TWILIO_API_KEY?.trim();
+        const apiSecret = config.TWILIO_API_SECRET?.trim();
+
+        if (!accountSid || !apiKey || !apiSecret) {
             throw new BadRequestError(
                 'Voice/video calling is not configured on the server. Please set Twilio API credentials.'
             );
@@ -117,14 +127,13 @@ class TwilioService {
         const { VideoGrant } = AccessToken;
 
         const token = new AccessToken(
-            config.TWILIO_ACCOUNT_SID,
-            config.TWILIO_API_KEY,
-            config.TWILIO_API_SECRET,
-            { identity: String(identity || userId), ttl: 3600 }
+            accountSid,
+            apiKey,
+            apiSecret,
+            { identity: String(identity || userId).trim(), ttl: 3600 }
         );
 
-        // Room is created automatically when the first participant connects (trial-safe)
-        token.addGrant(new VideoGrant({ room: roomName }));
+        token.addGrant(new VideoGrant({ room: String(roomName).trim() }));
 
         return token.toJwt();
     }
