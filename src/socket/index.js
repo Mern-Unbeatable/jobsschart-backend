@@ -953,3 +953,21 @@ export function notifyBookingCancelled(userId, payload) {
     if (!io) return;
     io.to(`user_${userId}`).emit('booking_cancelled', payload);
 }
+
+/** Notify customer when consultant confirms an appointment */
+export function notifyBookingConfirmed(userId, payload) {
+    if (!io) return;
+    io.to(`user_${userId}`).emit('booking_confirmed', payload);
+}
+
+/** Notify customer when consultant marks appointment complete */
+export function notifyBookingCompleted(userId, payload) {
+    if (!io) return;
+    io.to(`user_${userId}`).emit('booking_completed', payload);
+}
+
+/** Notify consultant of a new booking request */
+export function notifyNewBookingRequest(consultantUserId, payload) {
+    if (!io) return;
+    io.to(`user_${consultantUserId}`).emit('new_booking_request', payload);
+}

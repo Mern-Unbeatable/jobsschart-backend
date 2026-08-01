@@ -2,7 +2,7 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import nodemailer from 'nodemailer';
-import { notifyBookingCancelled } from '../../socket/index.js';
+import { notifyBookingCancelled, notifyBookingConfirmed, notifyBookingCompleted, notifyNewBookingRequest } from '../../socket/index.js';
 
 const log = new Logger('ScheduleService');
 
@@ -21,6 +21,13 @@ class ScheduleService {
     getTimeInMinutes(time) {
         const [hours, minutes] = time.split(':').map(Number);
         return (hours * 60) + minutes;
+    }
+
+    _formatBookingDateLabel(startTime) {
+        return new Date(startTime).toLocaleString('en-US', {
+            dateStyle: 'full',
+            timeStyle: 'short',
+        });
     }
 
     /**
@@ -236,6 +243,59 @@ class ScheduleService {
             return schedule;
         });
 
+        const bookingDateLabel = this._formatBookingDateLabel(result.startTime);
+        const clientName = result.user?.name || result.user?.username || 'A client';
+        const consultantUserId = result.consultant?.userId;
+
+        if (consultantUserId) {
+            await prisma.notification.create({
+                data: {
+                    userId: consultantUserId,
+                    type: 'SYSTEM',
+                    title: 'New Appointment Request',
+                    message: `${clientName} requested an appointment on ${bookingDateLabel}. Please review and confirm.`,
+                    data: {
+                        bookingId: result.id,
+                        consultantId: result.consultantId,
+                        status: 'PENDING',
+                    },
+                },
+            }).catch((err) => log.error(`New booking notification failed: ${err.message}`));
+
+            notifyNewBookingRequest(consultantUserId, {
+                bookingId: result.id,
+                title: 'New Appointment Request',
+                message: `${clientName} requested an appointment on ${bookingDateLabel}.`,
+                clientName,
+                bookingDateLabel,
+                status: 'PENDING',
+            });
+
+            if (result.consultant?.user?.email) {
+                transporter.sendMail({
+                    from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                    to: result.consultant.user.email,
+                    subject: 'New appointment request',
+                    html: `<p>Hello ${result.consultant.user.name || 'there'},</p>
+                           <p><strong>${clientName}</strong> has requested an appointment on <strong>${bookingDateLabel}</strong>.</p>
+                           <p>Please log in to your consultant dashboard to accept or manage this booking.</p>
+                           <p>Thank you,<br/>Illorac Team</p>`,
+                }).catch((err) => log.error(`New booking consultant email failed: ${err.message}`));
+            }
+        }
+
+        if (result.user?.email) {
+            transporter.sendMail({
+                from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: result.user.email,
+                subject: 'Appointment request received',
+                html: `<p>Hello ${result.user.name || 'there'},</p>
+                       <p>Your appointment request with <strong>${result.consultant?.user?.name || 'your consultant'}</strong> on <strong>${bookingDateLabel}</strong> has been received.</p>
+                       <p>We will notify you once the consultant confirms your booking.</p>
+                       <p>Thank you,<br/>Illorac Team</p>`,
+            }).catch((err) => log.error(`New booking user email failed: ${err.message}`));
+        }
+
         return result;
     }
 
@@ -434,11 +494,91 @@ class ScheduleService {
     }
 
     async confirmBooking(bookingId, userId, role) {
-        return this.updateBookingStatus(bookingId, userId, role, 'CONFIRMED');
+        const updated = await this.updateBookingStatus(bookingId, userId, role, 'CONFIRMED');
+        const bookingDateLabel = this._formatBookingDateLabel(updated.startTime);
+        const consultantName = updated.consultant?.user?.name || 'your consultant';
+        const message = `Your appointment with ${consultantName} on ${bookingDateLabel} has been confirmed.`;
+
+        await prisma.notification.create({
+            data: {
+                userId: updated.userId,
+                type: 'SYSTEM',
+                title: 'Appointment Confirmed',
+                message,
+                data: {
+                    bookingId: updated.id,
+                    consultantId: updated.consultantId,
+                    status: 'CONFIRMED',
+                },
+            },
+        }).catch((err) => log.error(`Booking confirm notification failed: ${err.message}`));
+
+        if (updated.user?.email) {
+            transporter.sendMail({
+                from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: updated.user.email,
+                subject: 'Your appointment has been confirmed',
+                html: `<p>Hello ${updated.user.name || 'there'},</p>
+                       <p>Great news! Your appointment with <strong>${consultantName}</strong> on <strong>${bookingDateLabel}</strong> has been confirmed.</p>
+                       <p>You can view the details from your dashboard and contact your consultant via chat or call when needed.</p>
+                       <p>Thank you,<br/>Illorac Team</p>`,
+            }).catch((err) => log.error(`Booking confirm email failed: ${err.message}`));
+        }
+
+        notifyBookingConfirmed(updated.userId, {
+            bookingId: updated.id,
+            title: 'Appointment Confirmed',
+            message,
+            consultantName,
+            bookingDateLabel,
+            status: 'CONFIRMED',
+        });
+
+        return updated;
     }
 
     async completeBooking(bookingId, userId, role) {
-        return this.updateBookingStatus(bookingId, userId, role, 'COMPLETED');
+        const updated = await this.updateBookingStatus(bookingId, userId, role, 'COMPLETED');
+        const bookingDateLabel = this._formatBookingDateLabel(updated.startTime);
+        const consultantName = updated.consultant?.user?.name || 'your consultant';
+        const message = `Your appointment with ${consultantName} on ${bookingDateLabel} has been marked as completed.`;
+
+        await prisma.notification.create({
+            data: {
+                userId: updated.userId,
+                type: 'SYSTEM',
+                title: 'Appointment Completed',
+                message,
+                data: {
+                    bookingId: updated.id,
+                    consultantId: updated.consultantId,
+                    status: 'COMPLETED',
+                },
+            },
+        }).catch((err) => log.error(`Booking complete notification failed: ${err.message}`));
+
+        if (updated.user?.email) {
+            transporter.sendMail({
+                from: `"Illorac" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+                to: updated.user.email,
+                subject: 'Your appointment is complete',
+                html: `<p>Hello ${updated.user.name || 'there'},</p>
+                       <p>Your appointment with <strong>${consultantName}</strong> on <strong>${bookingDateLabel}</strong> has been marked as completed.</p>
+                       <p>Thank you for using Illorac. We hope your session was helpful.</p>
+                       <p>Thank you,<br/>Illorac Team</p>`,
+            }).catch((err) => log.error(`Booking complete email failed: ${err.message}`));
+        }
+
+        notifyBookingCompleted(updated.userId, {
+            bookingId: updated.id,
+            title: 'Appointment Completed',
+            message,
+            consultantName,
+            bookingDateLabel,
+            status: 'COMPLETED',
+        });
+
+        return updated;
     }
 
     async cancelBookingByConsultant(bookingId, userId, role) {
