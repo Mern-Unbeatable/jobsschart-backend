@@ -11,6 +11,13 @@ const PRICE_PER_MINUTE = 2.50;
 const CONSULTANT_SHARE_RATE = 0.5;
 const PLATFORM_SHARE_RATE   = 0.5;
 
+function formatDurationSeconds(totalSeconds) {
+    const seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 /** Prevent double-billing when two end requests arrive at once (no ENDING enum in DB) */
 const endingSessionLocks = new Set();
 
@@ -467,7 +474,10 @@ class ChatService {
 
         const totalMinutes = parseFloat(conv.totalMinutes || 0);
         const totalCost = parseFloat(conv.totalCost || 0);
-        await this._sendTranscriptEmail(conv, totalMinutes, totalCost);
+        const durationSeconds = conv.startedAt && conv.endedAt
+            ? Math.max(0, Math.round((new Date(conv.endedAt).getTime() - new Date(conv.startedAt).getTime()) / 1000))
+            : 0;
+        await this._sendTranscriptEmail(conv, totalMinutes, totalCost, durationSeconds);
 
         return { sent: true, email: user.email };
     }
@@ -797,9 +807,13 @@ class ChatService {
         // Already ended — return stored values
         if (conv.sessionStatus === 'ENDED' || conv.sessionStatus === 'IDLE') {
             log.info(`Session already ended/idle: ${conversationId}`);
+            const durationSeconds = conv.startedAt && conv.endedAt
+                ? Math.max(0, Math.round((new Date(conv.endedAt).getTime() - new Date(conv.startedAt).getTime()) / 1000))
+                : 0;
             return {
                 totalMinutes: parseFloat(conv.totalMinutes || 0),
                 totalCost: parseFloat(conv.totalCost || 0),
+                durationSeconds,
                 endedAt: conv.endedAt || new Date(),
                 sessionId: null,
                 sessionCreated: false,
@@ -896,14 +910,15 @@ class ChatService {
 
         // System message
         if (billingUserId) {
+            const durationLabel = formatDurationSeconds(durationSeconds);
             const endMsg = reason === 'insufficient_balance'
-                ? `Session ended: insufficient balance · ${totalMinutes.toFixed(2)} min · €${totalCost.toFixed(2)} total`
-                : `Session ended · ${totalMinutes.toFixed(2)} min · €${totalCost.toFixed(2)} total`;
+                ? `Session ended: insufficient balance · ${durationLabel} · €${totalCost.toFixed(2)} total`
+                : `Session ended · ${durationLabel} · €${totalCost.toFixed(2)} total`;
             await this._postSystemMessage(conversationId, billingUserId, endMsg);
         }
 
         // Transcript email (non-blocking)
-        this._sendTranscriptEmail(conv, totalMinutes, totalCost).catch(e =>
+        this._sendTranscriptEmail(conv, totalMinutes, totalCost, durationSeconds).catch(e =>
             log.error(`Transcript email failed: ${e.message}`)
         );
 
@@ -954,7 +969,7 @@ class ChatService {
 
     // ── Transcript Email ──────────────────────────────────────────
 
-    async _sendTranscriptEmail(conv, totalMinutes, totalCost) {
+    async _sendTranscriptEmail(conv, totalMinutes, totalCost, durationSeconds = 0) {
         try {
             const messages = await prisma.chatMessage.findMany({
                 where: { conversationId: conv.id },
@@ -989,8 +1004,9 @@ class ChatService {
 
             const consultantTotal = Number((totalMinutes * PRICE_PER_MINUTE * CONSULTANT_SHARE_RATE).toFixed(2));
             const platformTotal = Number((totalMinutes * PRICE_PER_MINUTE * PLATFORM_SHARE_RATE).toFixed(2));
+            const durationLabel = formatDurationSeconds(durationSeconds);
 
-            const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="margin:0;padding:0;background:#f8f8f8;font-family:Arial,sans-serif;"><table width="100%" style="padding:30px 0;"><tr><td align="center"><table width="600" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1);"><tr><td style="background:linear-gradient(135deg,#6E35AE,#9B59B6);padding:30px;text-align:center;"><h1 style="color:#fff;margin:0;font-size:24px;">Session Transcript</h1><p style="color:#e8d5ff;margin:8px 0 0;font-size:14px;">${sessionDate}</p></td></tr><tr><td style="padding:24px 30px;background:#faf7ff;border-bottom:1px solid #eee;"><table width="100%"><tr><td style="text-align:center;padding:10px;"><p style="margin:0;font-size:12px;color:#999;">Consultant</p><p style="margin:4px 0 0;font-size:18px;font-weight:bold;color:#333;">${consultantName}</p></td><td style="text-align:center;padding:10px;"><p style="margin:0;font-size:12px;color:#999;">Duration</p><p style="margin:4px 0 0;font-size:18px;font-weight:bold;color:#333;">${totalMinutes.toFixed(2)} min</p></td><td style="text-align:center;padding:10px;"><p style="margin:0;font-size:12px;color:#999;">Total</p><p style="margin:4px 0 0;font-size:18px;font-weight:bold;color:#6E35AE;">€${parseFloat(totalCost).toFixed(2)}</p></td></tr></table></td></tr>${messagesHtml ? `<tr><td style="padding:24px 30px;"><p style="margin:0 0 16px;font-size:16px;font-weight:bold;color:#333;">Conversation</p><table width="100%">${messagesHtml}</table></td></tr>` : `<tr><td style="padding:40px;text-align:center;color:#999;">No messages</td></tr>`}<tr><td style="padding:20px 30px;background:#f8f8f8;text-align:center;border-top:1px solid #eee;"><p style="margin:0;font-size:12px;color:#999;">Rate: €${PRICE_PER_MINUTE}/min · Consultant: €${consultantTotal} (50%) · Platform: €${platformTotal} (50%)</p></td></tr></table></td></tr></table></body></html>`;
+            const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="margin:0;padding:0;background:#f8f8f8;font-family:Arial,sans-serif;"><table width="100%" style="padding:30px 0;"><tr><td align="center"><table width="600" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.1);"><tr><td style="background:linear-gradient(135deg,#6E35AE,#9B59B6);padding:30px;text-align:center;"><h1 style="color:#fff;margin:0;font-size:24px;">Session Transcript</h1><p style="color:#e8d5ff;margin:8px 0 0;font-size:14px;">${sessionDate}</p></td></tr><tr><td style="padding:24px 30px;background:#faf7ff;border-bottom:1px solid #eee;"><table width="100%"><tr><td style="text-align:center;padding:10px;"><p style="margin:0;font-size:12px;color:#999;">Consultant</p><p style="margin:4px 0 0;font-size:18px;font-weight:bold;color:#333;">${consultantName}</p></td><td style="text-align:center;padding:10px;"><p style="margin:0;font-size:12px;color:#999;">Duration</p><p style="margin:4px 0 0;font-size:18px;font-weight:bold;color:#333;">${durationLabel}</p></td><td style="text-align:center;padding:10px;"><p style="margin:0;font-size:12px;color:#999;">Total</p><p style="margin:4px 0 0;font-size:18px;font-weight:bold;color:#6E35AE;">€${parseFloat(totalCost).toFixed(2)}</p></td></tr></table></td></tr>${messagesHtml ? `<tr><td style="padding:24px 30px;"><p style="margin:0 0 16px;font-size:16px;font-weight:bold;color:#333;">Conversation</p><table width="100%">${messagesHtml}</table></td></tr>` : `<tr><td style="padding:40px;text-align:center;color:#999;">No messages</td></tr>`}<tr><td style="padding:20px 30px;background:#f8f8f8;text-align:center;border-top:1px solid #eee;"><p style="margin:0;font-size:12px;color:#999;">Rate: €${PRICE_PER_MINUTE}/min · Consultant: €${consultantTotal} (50%) · Platform: €${platformTotal} (50%)</p></td></tr></table></td></tr></table></body></html>`;
 
             await transporter.sendMail({
                 from: `"Consultation Platform" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
