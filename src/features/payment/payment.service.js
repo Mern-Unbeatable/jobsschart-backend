@@ -428,6 +428,17 @@ class PaymentService {
       paymentMethod: paymentMethod && ALLOWED_PAYMENT_METHODS.has(paymentMethod) ? paymentMethod : undefined,
     });
 
+    const redirectWithSession = `${clientUrl}/payment/success?type=${type}&session_id=${encodeURIComponent(molliePayment.id)}`;
+    try {
+      await axios.patch(
+        `${MOLLIE_API_BASE}/payments/${molliePayment.id}`,
+        { redirectUrl: redirectWithSession },
+        { headers: this._mollieHeaders() },
+      );
+    } catch (error) {
+      log.warn(`Could not update Mollie redirect URL for ${molliePayment.id}: ${error.message}`);
+    }
+
     log.info(`Mollie payment mode=${this._mollieMode()} currency=${config.MOLLIE_CURRENCY} id=${molliePayment.id}`);
 
     const checkoutUrl = molliePayment?._links?.checkout?.href;

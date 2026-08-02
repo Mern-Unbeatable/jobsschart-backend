@@ -166,6 +166,12 @@ class ChatService {
     }
 
     async getUserConversations(userId) {
+        const requester = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { role: true },
+        });
+        const isConsultant = requester?.role === 'CONSULTANT' || requester?.role === 'ADMIN';
+
         const conversations = await prisma.chatConversation.findMany({
             where: { participants: { some: { userId } } },
             include: {
@@ -214,7 +220,7 @@ class ChatService {
             (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
         );
 
-        return Promise.all(all.map((c) => this._formatConversation(c, userId)));
+        return Promise.all(all.map((c) => this._formatConversation(c, userId, { isConsultant })));
     }
 
     async getMessages(conversationId, userId, page = 1, limit = 50) {
@@ -1062,12 +1068,17 @@ class ChatService {
         };
     }
 
-    async _formatConversation(conv, userId) {
+    async _formatConversation(conv, userId, options = {}) {
         const unreadCount = await prisma.chatMessage.count({
             where: { conversationId: conv.id, senderId: { not: userId }, isRead: false },
         });
         const otherParticipant = conv.participants.find(p => p.userId !== userId);
-        const lastMessage = conv.messages[0] || null;
+        let lastMessage = conv.messages[0] || null;
+
+        // Consultants must not see prior message content after a session ends
+        if (options.isConsultant && (conv.sessionStatus === 'ENDED' || conv.endedAt)) {
+            lastMessage = null;
+        }
 
         let otherUser = otherParticipant?.user || null;
         if (otherUser && (otherUser.role === 'CONSULTANT' || otherUser.role === 'ADMIN')) {
@@ -1090,7 +1101,7 @@ class ChatService {
             otherUser,
             consultantRecordId: otherUser?.consultantRecordId || null,
             lastMessage,
-            unreadCount,
+            unreadCount: options.isConsultant && (conv.sessionStatus === 'ENDED' || conv.endedAt) ? 0 : unreadCount,
             updatedAt: conv.updatedAt,
             createdAt: conv.createdAt,
         };

@@ -69,10 +69,11 @@ export class ValidationError extends CustomError {
 // ─── NEW: wraps a ZodError into a clean CustomError ──────────────
 export class ZodValidationError extends CustomError {
   constructor(zodError) {
-    super('Validation failed', HTTP_STATUS.BAD_REQUEST);
+    super('Please check your information and try again.', HTTP_STATUS.BAD_REQUEST);
     this.name = 'ZodValidationError';
-    this.errors = zodError.errors.map((err) => ({
-      field: err.path.join('.') || 'unknown',
+    const issues = zodError?.issues || zodError?.errors || [];
+    this.errors = issues.map((err) => ({
+      field: (err.path || []).join('.') || 'unknown',
       message: err.message,
     }));
   }

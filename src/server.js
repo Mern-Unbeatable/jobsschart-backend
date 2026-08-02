@@ -541,8 +541,11 @@ export class Server {
         return res.status(error.statusCode).json(error.serializeErrors());
       }
 
-      if (error.name === 'ZodError' && Array.isArray(error.errors)) {
-        return res.status(HTTP_STATUS.BAD_REQUEST).json(new ZodValidationError(error).serializeErrors());
+      if (error.name === 'ZodError') {
+        const issues = error.issues || error.errors;
+        if (Array.isArray(issues) && issues.length > 0) {
+          return res.status(HTTP_STATUS.BAD_REQUEST).json(new ZodValidationError(error).serializeErrors());
+        }
       }
 
       if (error.name === 'JsonWebTokenError') {

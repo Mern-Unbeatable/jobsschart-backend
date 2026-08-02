@@ -85,17 +85,33 @@ class ScheduleService {
 
     buildSessionAccess(booking) {
         const now = new Date();
-        const sessionOpensAt = new Date(booking.startTime.getTime() - (10 * 60 * 1000));
-        const canStartSession =
-            ['PENDING', 'CONFIRMED'].includes(booking.status) &&
-            now >= sessionOpensAt &&
-            now <= booking.endTime;
+        const startTime = new Date(booking.startTime);
+        const endTime = new Date(booking.endTime);
+        const sessionOpensAt = new Date(startTime.getTime() - (10 * 60 * 1000));
+        const isConfirmed = booking.status === 'CONFIRMED';
+        const isWithinWindow = now >= sessionOpensAt && now <= endTime;
+        const canStartSession = isConfirmed && isWithinWindow;
+
+        let reason = null;
+        if (booking.status === 'CANCELLED') reason = 'cancelled';
+        else if (booking.status === 'COMPLETED') reason = 'completed';
+        else if (!isConfirmed) reason = 'waiting_for_confirmation';
+        else if (now < sessionOpensAt) reason = 'too_early';
+        else if (now > endTime) reason = 'expired';
 
         return {
             canStartCall: canStartSession,
             canStartChat: canStartSession,
             sessionOpensAt,
-            sessionClosesAt: booking.endTime,
+            sessionClosesAt: endTime,
+            reason,
+        };
+    }
+
+    _withSessionAccess(booking) {
+        return {
+            ...booking,
+            sessionAccess: this.buildSessionAccess(booking),
         };
     }
 
@@ -339,7 +355,7 @@ class ScheduleService {
 
         return {
             meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
-            bookings,
+            bookings: bookings.map((booking) => this._withSessionAccess(booking)),
         };
     }
 
@@ -952,10 +968,7 @@ class ScheduleService {
             take: limit,
         });
 
-        return bookings.map((booking) => ({
-            ...booking,
-            sessionAccess: this.buildSessionAccess(booking),
-        }));
+        return bookings.map((booking) => this._withSessionAccess(booking));
     }
 
     async getUserUpcomingBookings(userId, limit = 10) {
@@ -987,9 +1000,8 @@ class ScheduleService {
         });
 
         return bookings.map((booking) => ({
-            ...booking,
+            ...this._withSessionAccess(booking),
             consultantUserId: booking.consultant?.userId || null,
-            sessionAccess: this.buildSessionAccess(booking),
         }));
     }
 }

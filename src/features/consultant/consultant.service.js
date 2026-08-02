@@ -701,13 +701,27 @@ class ConsultantService {
             throw new BadRequestError('Only pending verifications can be reviewed');
         }
 
-        return prisma.consultant.update({
+        const updateData = { verificationStatus: status };
+        if (status === 'VERIFIED') {
+            updateData.isApproved = true;
+        }
+
+        const updated = await prisma.consultant.update({
             where: { id: consultantId },
-            data: { verificationStatus: status },
+            data: updateData,
             include: {
                 user: { select: { id: true, name: true, email: true } },
             },
         });
+
+        if (status === 'VERIFIED') {
+            await prisma.user.update({
+                where: { id: consultant.userId },
+                data: { isVerified: true },
+            });
+        }
+
+        return updated;
     }
 }
 
