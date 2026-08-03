@@ -1,5 +1,6 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
+import { NotFoundError } from '../../shared/globals/helpers/error-handler.js';
 
 class UserService {
   constructor() {
@@ -351,9 +352,66 @@ class UserService {
   }
 
   async deleteUser(userId) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new Error('User not found');
-    return prisma.user.delete({ where: { id: userId } });
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { consultant: { select: { id: true } } },
+    });
+    if (!user) throw new NotFoundError('User not found');
+
+    await prisma.$transaction(async (tx) => {
+      const callIds = (
+        await tx.call.findMany({
+          where: { OR: [{ userId }, { consultantId: userId }] },
+          select: { id: true },
+        })
+      ).map((call) => call.id);
+
+      await tx.chatBilling.deleteMany({
+        where: { OR: [{ userId }, { consultantId: userId }] },
+      });
+
+      await tx.session.deleteMany({
+        where: { OR: [{ userId }, { consultantUserId: userId }] },
+      });
+
+      if (callIds.length > 0) {
+        await tx.callBilling.deleteMany({ where: { callId: { in: callIds } } });
+        await tx.callFile.deleteMany({ where: { callId: { in: callIds } } });
+        await tx.creditTransaction.deleteMany({ where: { callId: { in: callIds } } });
+        await tx.consultantEarning.deleteMany({ where: { callId: { in: callIds } } });
+        await tx.conversationSession.deleteMany({ where: { callId: { in: callIds } } });
+        await tx.call.deleteMany({ where: { id: { in: callIds } } });
+      }
+
+      if (user.consultant?.id) {
+        await tx.consultantEarning.deleteMany({
+          where: { consultantId: user.consultant.id },
+        });
+      }
+
+      await tx.message.deleteMany({ where: { senderId: userId } });
+      await tx.conversationAnalytics.deleteMany({ where: { userId } });
+      await tx.chatMessage.deleteMany({ where: { senderId: userId } });
+      await tx.consultantQuery.deleteMany({ where: { consultantId: userId } });
+      await tx.payment.deleteMany({ where: { userId } });
+
+      const orderIds = (
+        await tx.order.findMany({
+          where: { userId },
+          select: { id: true },
+        })
+      ).map((order) => order.id);
+
+      if (orderIds.length > 0) {
+        await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+        await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+      }
+
+      await tx.user.delete({ where: { id: userId } });
+    }, { timeout: 30000 });
+
+    this.log.info(`User deleted with related records: ${userId}`);
+    return { deleted: true };
   }
 }
 

@@ -3,6 +3,7 @@ import { Logger } from '../../config/logger.js';
 import { catchAsync } from '../../shared/globals/decorators/catch-async.js';
 import { ResponseHandler } from '../../shared/globals/helpers/response.handler.js';
 import { userService } from './user.services.js';
+import { BadRequestError } from '../../shared/globals/helpers/error-handler.js';
 
 import {
   updateProfileSchema,
@@ -181,12 +182,26 @@ class UserController {
     const { id } = req.params;
 
     if (id === req.user.id) {
-      throw new Error('Use DELETE /me to delete your own account');
+      throw new BadRequestError('Use DELETE /me to delete your own account');
     }
 
     this.log.info(`Admin: deleting user ${id}`);
 
-    await userService.deleteUser(id);
+    try {
+      await userService.deleteUser(id);
+    } catch (error) {
+      const fkViolation =
+        error?.code === 'P2003'
+        || error?.message?.includes('foreign key')
+        || error?.message?.includes('violates RESTRICT');
+
+      if (fkViolation) {
+        throw new BadRequestError(
+          'Cannot delete this account because related records still exist. Suspend the account instead.',
+        );
+      }
+      throw error;
+    }
 
     ResponseHandler.success(res, {
       message: 'User deleted successfully',
