@@ -986,7 +986,10 @@ class ChatService {
             const userParticipant = conv.participants?.find(p => p.user.role === 'USER');
             const consultantParticipant = conv.participants?.find(p => p.user.role !== 'USER');
 
-            if (!userParticipant?.user?.email) return;
+            if (!userParticipant?.user?.email) {
+                log.warn(`Transcript email skipped: no USER email on conversation ${conv.id}`);
+                return;
+            }
 
             const consultantName = consultantParticipant?.user?.name || 'Consultant';
             const userEmail = userParticipant.user.email;
@@ -1023,7 +1026,10 @@ class ChatService {
 
             log.info(`Transcript email sent to ${userEmail}`);
         } catch (err) {
-            log.error(`Transcript email failed: ${err.message}`);
+            log.error(`Transcript email failed: ${err.message}`, {
+                code: err.code,
+                response: err.response,
+            });
         }
     }
 

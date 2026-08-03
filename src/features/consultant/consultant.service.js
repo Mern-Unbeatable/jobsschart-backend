@@ -122,8 +122,14 @@ class ConsultantService {
 
         const where = {};
 
-        if (queryParams.approved !== undefined) {
+        if (queryParams.includeUnapproved === 'true') {
+            if (queryParams.approved !== undefined) {
+                where.isApproved = queryParams.approved === 'true';
+            }
+        } else if (queryParams.approved !== undefined) {
             where.isApproved = queryParams.approved === 'true';
+        } else {
+            where.isApproved = true;
         }
 
         if (queryParams.onlineStatus) {
@@ -209,7 +215,7 @@ class ConsultantService {
         };
     }
 
-    async getConsultantById(consultantId) {
+    async getConsultantById(consultantId, { publicOnly = true } = {}) {
         let consultant = await prisma.consultant.findUnique({
             where: { id: consultantId },
             include: {
@@ -287,6 +293,8 @@ class ConsultantService {
         }
 
         if (!consultant) return null;
+
+        if (publicOnly && !consultant.isApproved) return null;
 
         const avgRating = consultant.reviews.length > 0
             ? consultant.reviews.reduce((sum, r) => sum + r.rating, 0) / consultant.reviews.length
