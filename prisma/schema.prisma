@@ -1134,3 +1134,45 @@ model Topic {
 
   @@map("topics")
 }
+
+enum ActivityType {
+  EVENT
+  WORKSHOP
+}
+
+model Activity {
+  id            String                 @id @default(uuid())
+  type          ActivityType
+  title         String
+  description   String
+  host          String
+  hostTitle     String?
+  date          String
+  time          String
+  price         String?
+  location      String?
+  duration      String?
+  tags          String[]               @default([])
+  image         String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  registrations ActivityRegistration[]
+
+  @@index([type])
+  @@index([date])
+  @@map("activities")
+}
+
+model ActivityRegistration {
+  id           String   @id @default(uuid())
+  activityId   String
+  fullName     String
+  emailAddress String
+  createdAt    DateTime @default(now())
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([activityId])
+  @@index([emailAddress])
+  @@map("activity_registrations")
+}
