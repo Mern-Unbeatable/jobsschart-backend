@@ -1,4 +1,5 @@
 
+import { activityRoutes } from '../features/activity/activity.route.js';
 import { adCampaignRoutes } from '../features/adcampaign/adcampaign.route.js';
 import { adminDashboardRoutes } from '../features/admin/admin.route.js';
 import { authRoutes } from '../features/auth/auth.routes.js';
@@ -48,6 +49,7 @@ export default (app) => {
   app.use(`${BASE_PATH}/chat`, chatRoute);
   app.use(`${BASE_PATH}/post`, postRoutes);
   app.use(`${BASE_PATH}/faqs`, faqRoutes);
+  app.use(`${BASE_PATH}/activities`, activityRoutes);
   app.use(`${BASE_PATH}/community-questions`, communityQuestionRoutes);
   app.use(`${BASE_PATH}/availability`, availabilityRoutes);
   app.use(`${BASE_PATH}/sessions`, sessionRoutes);

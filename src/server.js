@@ -580,6 +580,25 @@ export class Server {
         });
       }
 
+      if (error.name === 'PrismaClientKnownRequestError') {
+        const prismaMessages = {
+          P2003: 'Related record not found',
+          P2014: 'Cannot delete or update due to related records',
+          P2021: 'Database table not found. Please run pending migrations.',
+          P2022: 'Database column not found. Please run pending migrations.',
+        };
+
+        const message = prismaMessages[error.code]
+          || (isProduction ? 'Database operation failed' : error.message);
+
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          status: 'error',
+          statusCode: HTTP_STATUS.BAD_REQUEST,
+          message,
+          ...(isProduction ? {} : { code: error.code }),
+        });
+      }
+
       if (error.name === 'PrismaClientValidationError') {
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
           status: 'error',
