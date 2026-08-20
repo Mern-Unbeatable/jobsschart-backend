@@ -18,6 +18,7 @@ import { config } from './config/config.js';
 import applicationRoutes from './routes/index.js';
 import { Logger } from './config/logger.js';
 import { CustomError, ZodValidationError } from './shared/globals/helpers/error-handler.js';
+import { localeMiddleware } from './shared/globals/helpers/locale.middleware.js';
 import { initSocket } from './socket/index.js';
 
 // Get __dirname equivalent in ES modules
@@ -371,6 +372,7 @@ export class Server {
     app.use(compression());
     app.use(json({ limit: '50mb' }));
     app.use(urlencoded({ extended: true, limit: '50mb' }));
+    app.use(localeMiddleware);
 
     // Request logging middleware
     app.use((req, _res, next) => {
@@ -599,11 +601,19 @@ export class Server {
         });
       }
 
-      if (error.name === 'PrismaClientValidationError') {
+      if (error.name === 'PrismaClientValidationError' || error.message?.includes('Invalid `prisma')) {
+        const argMatch = error.message?.match(/Argument `(\w+)` must not be null/);
+        const missingMatch = error.message?.match(/Argument `(\w+)` is missing/);
+        const friendly = argMatch
+          ? `Field "${argMatch[1]}" cannot be null`
+          : missingMatch
+            ? `Required field "${missingMatch[1]}" is missing`
+            : null;
+
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
           status: 'error',
           statusCode: HTTP_STATUS.BAD_REQUEST,
-          message: isProduction ? 'Invalid request data' : error.message,
+          message: friendly || (isProduction ? 'Invalid request data' : error.message),
         });
       }
 

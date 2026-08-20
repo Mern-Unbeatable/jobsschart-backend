@@ -1,21 +1,22 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ForbiddenError } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('CommunityQuestionService');
 
 class CommunityQuestionService {
-  // User/Consultant: Create a question
   async createQuestion(userId, userRole, data) {
     const questionType = userRole === 'CONSULTANT' ? 'CONSULTANT' : 'USER';
-    
+    const sourceLocale = data.sourceLang || 'en';
+
     const question = await prisma.communityQuestion.create({
       data: {
         userId,
         questionType,
-        subject: data.subject,
-        question: data.question,
-        topic: data.topic || null,
+        subject: await expandI18n(data.subject, { sourceLocale }),
+        question: await expandI18n(data.question, { sourceLocale }),
+        topic: data.topic != null ? await expandI18n(data.topic, { sourceLocale }) : null,
         status: 'PENDING',
       },
       include: {
@@ -35,7 +36,6 @@ class CommunityQuestionService {
     return question;
   }
 
-  // User/Consultant: Get their own questions
   async getMyQuestions(userId, userRole, queryParams = {}) {
     const {
       page = 1,
@@ -47,19 +47,17 @@ class CommunityQuestionService {
       search,
     } = queryParams;
 
-    const where = {
-      userId,
-    };
+    const where = { userId };
 
     if (status) where.status = status;
-    if (topic) where.topic = { contains: topic, mode: 'insensitive' };
-    
+
+    if (topic) {
+      where.OR = jsonLocaleSearch(['topic'], topic);
+    }
+
     if (search) {
       where.OR = [
-        { subject: { contains: search, mode: 'insensitive' } },
-        { question: { contains: search, mode: 'insensitive' } },
-        { answer: { contains: search, mode: 'insensitive' } },
-        { topic: { contains: search, mode: 'insensitive' } },
+        ...jsonLocaleSearch(['subject', 'question', 'answer', 'topic'], search),
       ];
     }
 
@@ -106,7 +104,6 @@ class CommunityQuestionService {
     };
   }
 
-  // User/Consultant: Get single question (only their own)
   async getMyQuestionById(questionId, userId) {
     const question = await prisma.communityQuestion.findFirst({
       where: {
@@ -133,7 +130,6 @@ class CommunityQuestionService {
     return question;
   }
 
-  // Admin: Get all questions (with filters)
   async getAllQuestions(queryParams = {}) {
     const {
       page = 1,
@@ -150,15 +146,13 @@ class CommunityQuestionService {
 
     if (status) where.status = status;
     if (questionType) where.questionType = questionType;
-    if (topic) where.topic = { contains: topic, mode: 'insensitive' };
-    
+
+    if (topic) {
+      where.OR = jsonLocaleSearch(['topic'], topic);
+    }
+
     if (search) {
-      where.OR = [
-        { subject: { contains: search, mode: 'insensitive' } },
-        { question: { contains: search, mode: 'insensitive' } },
-        { answer: { contains: search, mode: 'insensitive' } },
-        { topic: { contains: search, mode: 'insensitive' } },
-      ];
+      where.OR = jsonLocaleSearch(['subject', 'question', 'answer', 'topic'], search);
     }
 
     const take = Math.min(parseInt(limit) || 20, 100);
@@ -204,8 +198,7 @@ class CommunityQuestionService {
     };
   }
 
-  // Admin: Answer a question
-  async answerQuestion(questionId, adminId, answer) {
+  async answerQuestion(questionId, adminId, data) {
     const question = await prisma.communityQuestion.findUnique({
       where: { id: questionId },
     });
@@ -217,6 +210,8 @@ class CommunityQuestionService {
     if (question.status === 'ANSWERED') {
       throw new ForbiddenError('This question has already been answered');
     }
+
+    const answer = await expandI18n(data.answer, { sourceLocale: data.sourceLang || 'en' });
 
     const updatedQuestion = await prisma.communityQuestion.update({
       where: { id: questionId },
@@ -243,8 +238,7 @@ class CommunityQuestionService {
     return updatedQuestion;
   }
 
-  // Admin: Update answer
-  async updateAnswer(questionId, adminId, answer) {
+  async updateAnswer(questionId, adminId, data) {
     const question = await prisma.communityQuestion.findUnique({
       where: { id: questionId },
     });
@@ -252,6 +246,8 @@ class CommunityQuestionService {
     if (!question) {
       throw new NotFoundError('Question not found');
     }
+
+    const answer = await expandI18n(data.answer, { sourceLocale: data.sourceLang || 'en' });
 
     const updatedQuestion = await prisma.communityQuestion.update({
       where: { id: questionId },
@@ -277,9 +273,6 @@ class CommunityQuestionService {
     return updatedQuestion;
   }
 
-
-
-  // Admin: Change question status
   async updateQuestionStatus(questionId, status) {
     const question = await prisma.communityQuestion.findUnique({
       where: { id: questionId },
@@ -309,7 +302,6 @@ class CommunityQuestionService {
     return updatedQuestion;
   }
 
-  // Public: Get answered questions (Community → View Services)
   async getPublicAnsweredQuestions(queryParams = {}) {
     const page = parseInt(queryParams.page) || 1;
     const limit = Math.min(parseInt(queryParams.limit) || 20, 50);
@@ -336,7 +328,6 @@ class CommunityQuestionService {
     };
   }
 
-  // Admin: Delete question
   async deleteQuestion(questionId) {
     const question = await prisma.communityQuestion.findUnique({
       where: { id: questionId },
@@ -353,10 +344,6 @@ class CommunityQuestionService {
     log.info(`Question ${questionId} deleted by admin`);
     return { success: true, message: 'Question deleted successfully' };
   }
-
-
-
-
 }
 
 export const communityQuestionService = new CommunityQuestionService();

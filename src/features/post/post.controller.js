@@ -77,9 +77,8 @@ class PostController {
 
   addComment = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { content } = req.body;
     log.info(`Adding comment to post: ${id} by user: ${req.user.id}`);
-    const comment = await postService.addComment(id, req.user.id, content);
+    const comment = await postService.addComment(id, req.user.id, req.body);
     ResponseHandler.created(res, {
       message: 'Comment added successfully',
       data: { comment },
@@ -107,9 +106,8 @@ class PostController {
 
   updateComment = catchAsync(async (req, res) => {
     const { commentId } = req.params;
-    const { content } = req.body;
     log.info(`Updating comment: ${commentId} by user: ${req.user.id}`);
-    const comment = await postService.updateComment(commentId, req.user.id, content);
+    const comment = await postService.updateComment(commentId, req.user.id, req.body);
     ResponseHandler.success(res, {
       message: 'Comment updated successfully',
       data: { comment },

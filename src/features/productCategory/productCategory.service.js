@@ -5,6 +5,7 @@ import {
     ConflictError,
     BadRequestError,
 } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('ProductCategoryService');
 
@@ -18,13 +19,11 @@ class ProductCategoryService {
         const where = {};
 
         if (queryParams.search) {
-            where.OR = [
-                { name: { contains: queryParams.search, mode: 'insensitive' } },
-            ];
+            where.OR = jsonLocaleSearch(['name'], queryParams.search);
         }
 
         const orderBy = {};
-        const sortField = queryParams.sortBy || 'name';
+        const sortField = queryParams.sortBy === 'name' ? 'createdAt' : (queryParams.sortBy || 'createdAt');
         const sortOrder = queryParams.sortOrder === 'desc' ? 'desc' : 'asc';
         orderBy[sortField] = sortOrder;
 
@@ -128,7 +127,7 @@ class ProductCategoryService {
 
         if (productCount > 0) {
             throw new BadRequestError(
-                `Cannot delete category "${category.name}" because it has ${productCount} product(s). ` +
+                `Cannot delete category because it has ${productCount} product(s). ` +
                 'Please reassign or delete the products first.'
             );
         }
@@ -143,26 +142,13 @@ class ProductCategoryService {
     }
 
     async createCategory(data) {
-        const existingName = await prisma.productCategory.findFirst({
-            where: {
-                name: {
-                    equals: data.name,
-                    mode: 'insensitive',
-                },
-            },
-        });
-
-        if (existingName) {
-            throw new ConflictError(`Category with name "${data.name}" already exists`);
-        }
-
         const category = await prisma.productCategory.create({
             data: {
-                name: data.name
+                name: await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' }),
             },
         });
 
-        log.info(`Category created: ${category.id} — "${category.name}"`);
+        log.info(`Category created: ${category.id}`);
         return category;
     }
 
@@ -183,23 +169,8 @@ class ProductCategoryService {
         const updateData = {};
 
         // Update name if provided
-        if (data.name && data.name !== category.name) {
-            // Check if new name already exists
-            const existingName = await prisma.productCategory.findFirst({
-                where: {
-                    name: {
-                        equals: data.name,
-                        mode: 'insensitive',
-                    },
-                    NOT: { id }
-                },
-            });
-
-            if (existingName) {
-                throw new ConflictError(`Category with name "${data.name}" already exists`);
-            }
-
-            updateData.name = data.name;
+        if (data.name) {
+            updateData.name = await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' });
         }
 
         // If no updates, return existing category

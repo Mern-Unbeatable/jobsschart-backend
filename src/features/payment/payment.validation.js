@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { i18nText, optionalI18nText, sourceLangSchema } from '../../shared/globals/helpers/i18n-schema.js';
 
 const donationDataSchema = z.object({
   donorType: z.enum(['INDIVIDUAL', 'BUSINESS']),
@@ -6,14 +7,14 @@ const donationDataSchema = z.object({
   phone: z.string().min(5).max(20),
   email: z.string().email(),
   amount: z.number().int().positive('Amount must be a positive integer'),
-  description: z.string().max(490).optional(),
-  location: z.string().max(200).optional(),
+  description: optionalI18nText(z.string().max(490)),
+  location: optionalI18nText(z.string().max(200)),
   image: z.string().url().optional(),
-  benefit: z.string().min(3).max(490),
-  // ADD THESE THREE FIELDS:
+  benefit: i18nText(z.string().min(3).max(490)),
   businessName: z.string().max(200).optional(),
   websiteUrl: z.string().max(500).optional(),
   businessType: z.enum(['LOCAL_BUSINESS', 'ONLINE_BUSINESS']).optional().default('LOCAL_BUSINESS'),
+  sourceLang: sourceLangSchema,
 });
 
 const cartItemSchema = z.object({

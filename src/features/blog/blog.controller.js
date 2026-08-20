@@ -45,8 +45,7 @@ class BlogController {
 
     // Create blog
     createBlog = catchAsync(async (req, res) => {
-        console.log('Creating blog with data:', req.body);
-        log.info(`Creating blog: ${req.body.title}`);
+        log.info(`Creating blog: ${typeof req.body.title === 'string' ? req.body.title : 'i18n object'}`);
 
         const blog = await blogService.createBlog({
             ...req.body,

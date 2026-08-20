@@ -1,6 +1,7 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('FaqService');
 
@@ -9,8 +10,8 @@ class FaqService {
   async createFaq(data) {
     const faq = await prisma.faq.create({
       data: {
-        question: data.question,
-        answer: data.answer,
+        question: await expandI18n(data.question, { sourceLocale: data.sourceLang || 'en' }),
+        answer: await expandI18n(data.answer, { sourceLocale: data.sourceLang || 'en' }),
         sortOrder: data.sortOrder || 0,
       },
     });
@@ -32,17 +33,14 @@ class FaqService {
     const where = {};
 
     if (search) {
-      where.OR = [
-        { question: { contains: search, mode: 'insensitive' } },
-        { answer: { contains: search, mode: 'insensitive' } },
-      ];
+      where.OR = jsonLocaleSearch(['question', 'answer'], search);
     }
 
     const take = Math.min(parseInt(limit) || 20, 100);
     const skip = (parseInt(page) - 1) * take;
 
     const orderBy = [];
-    const validSortFields = ['sortOrder', 'createdAt', 'updatedAt', 'question'];
+    const validSortFields = ['sortOrder', 'createdAt', 'updatedAt'];
     if (validSortFields.includes(sortBy)) {
       orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
     } else {
@@ -96,8 +94,12 @@ class FaqService {
     const updatedFaq = await prisma.faq.update({
       where: { id },
       data: {
-        question: data.question !== undefined ? data.question : undefined,
-        answer: data.answer !== undefined ? data.answer : undefined,
+        question: data.question !== undefined
+          ? await expandI18n(data.question, { sourceLocale: data.sourceLang || 'en' })
+          : undefined,
+        answer: data.answer !== undefined
+          ? await expandI18n(data.answer, { sourceLocale: data.sourceLang || 'en' })
+          : undefined,
         sortOrder: data.sortOrder !== undefined ? data.sortOrder : undefined,
       },
     });

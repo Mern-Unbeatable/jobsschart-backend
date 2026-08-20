@@ -3,6 +3,7 @@ import { prisma } from '../../config/db.js';
 import { invoicePdfService } from '../../shared/services/invoice-pdf.service.js';
 import { BadRequestError, NotFoundError } from '../../shared/globals/helpers/error-handler.js';
 import { Logger } from '../../config/logger.js';
+import { expandI18n, expandI18nArray } from '../../shared/services/translate.service.js';
 
 class ConsultantService {
     constructor() {
@@ -71,18 +72,48 @@ class ConsultantService {
     }
 
     async updateConsultantProfile(userId, data) {
-        const { specialization, bio, bioNl, pricePerMinute, firstNMinutes, firstNPrice } = data;
+        const {
+            specialization,
+            bio,
+            category,
+            topics,
+            pricePerMinute,
+            firstNMinutes,
+            firstNPrice,
+            sourceLang,
+        } = data;
+
+        const existing = await prisma.consultant.findUnique({ where: { userId } });
+        if (!existing) throw new NotFoundError('Consultant profile not found');
+
+        const sourceLocale = sourceLang || 'en';
+        const updateData = {};
+
+        if (specialization !== undefined) {
+            updateData.specialization = await expandI18nArray(specialization || [], { sourceLocale });
+        }
+        if (bio !== undefined) {
+            updateData.bio = bio == null || bio === ''
+                ? null
+                : await expandI18n(bio, { sourceLocale });
+        }
+        if (category !== undefined) {
+            updateData.category = category == null || category === ''
+                ? null
+                : await expandI18n(category, { sourceLocale });
+        }
+        if (topics !== undefined) {
+            updateData.topics = topics == null || topics === ''
+                ? null
+                : await expandI18n(topics, { sourceLocale });
+        }
+        if (pricePerMinute !== undefined) updateData.pricePerMinute = pricePerMinute;
+        if (firstNMinutes !== undefined) updateData.firstNMinutes = firstNMinutes;
+        if (firstNPrice !== undefined) updateData.firstNPrice = firstNPrice;
 
         const updatedConsultant = await prisma.consultant.update({
             where: { userId },
-            data: {
-                ...(specialization !== undefined && { specialization }),
-                ...(bio !== undefined && { bio }),
-                ...(bioNl !== undefined && { bioNl }),
-                ...(pricePerMinute !== undefined && { pricePerMinute }),
-                ...(firstNMinutes !== undefined && { firstNMinutes }),
-                ...(firstNPrice !== undefined && { firstNPrice }),
-            },
+            data: updateData,
             include: {
                 user: {
                     select: {
@@ -137,7 +168,10 @@ class ConsultantService {
         }
 
         if (queryParams.specialization) {
-            where.specialization = { has: queryParams.specialization };
+            where.OR = [
+                { specialization: { path: ['en'], array_contains: [queryParams.specialization] } },
+                { specialization: { path: ['nl'], array_contains: [queryParams.specialization] } },
+            ];
         }
 
         if (queryParams.minRating) {

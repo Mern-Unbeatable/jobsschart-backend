@@ -8,8 +8,9 @@ export const validateZod = (schema) =>
         } catch (err) {
             if (err instanceof ZodError) {
                 return res.status(400).json({
-                    success: false,
-                    message: "Validation error",
+                    status: 'error',
+                    statusCode: 400,
+                    message: 'Validation error',
                     errors: err.issues.map(issue => ({
                         field: issue.path.join("."),
                         message: issue.message,

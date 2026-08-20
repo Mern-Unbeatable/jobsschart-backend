@@ -1,20 +1,20 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ForbiddenError } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('PostService');
 
 class PostService {
-  // ==================== POST CRUD ====================
-
   async createPost(userId, data) {
+    const sourceLocale = data.sourceLang || 'en';
     const post = await prisma.post.create({
       data: {
         userId,
-        title: data.title || null,
-        content: data.content,
-        category: data.category || null,
-        subCategory: data.subCategory || null,
+        title: data.title != null ? await expandI18n(data.title, { sourceLocale }) : null,
+        content: await expandI18n(data.content, { sourceLocale }),
+        category: data.category != null ? await expandI18n(data.category, { sourceLocale }) : null,
+        subCategory: data.subCategory != null ? await expandI18n(data.subCategory, { sourceLocale }) : null,
         postType: data.postType || 'THOUGHT',
       },
       include: {
@@ -48,48 +48,38 @@ async getPosts(queryParams = {}, currentUserId = null) {
     userId,
     search,
     postType,
-    category,        // New: filter by category
-    subCategory,     // New: filter by subCategory
-    startDate,       // New: filter by date range
-    endDate,         // New: filter by date range
-    minLikes,        // New: filter by minimum likes
-    maxLikes,        // New: filter by maximum likes
-    minViews,        // New: filter by minimum views
-    maxViews,        // New: filter by maximum views
+    category,
+    subCategory,
+    startDate,
+    endDate,
+    minLikes,
+    maxLikes,
+    minViews,
+    maxViews,
   } = queryParams;
 
   const where = {
     isDeleted: false,
   };
 
-  // Basic filters
   if (userId) where.userId = userId;
   if (postType) where.postType = postType;
-  
-  // Category and SubCategory filters
+
   if (category) {
-    where.category = {
-      contains: category,
-      mode: 'insensitive',
-    };
-  }
-  
-  if (subCategory) {
-    where.subCategory = {
-      contains: subCategory,
-      mode: 'insensitive',
-    };
+    where.OR = [...(where.OR || []), ...jsonLocaleSearch(['category'], category)];
   }
 
-  // Search filter (title and content)
+  if (subCategory) {
+    where.OR = [...(where.OR || []), ...jsonLocaleSearch(['subCategory'], subCategory)];
+  }
+
   if (search) {
     where.OR = [
-      { title: { contains: search, mode: 'insensitive' } },
-      { content: { contains: search, mode: 'insensitive' } },
+      ...(where.OR || []),
+      ...jsonLocaleSearch(['title', 'content', 'category', 'subCategory'], search),
     ];
   }
 
-  // Date range filter
   if (startDate || endDate) {
     where.createdAt = {};
     if (startDate) {
@@ -100,7 +90,6 @@ async getPosts(queryParams = {}, currentUserId = null) {
     }
   }
 
-  // Likes count filter
   if (minLikes !== undefined || maxLikes !== undefined) {
     where.likesCount = {};
     if (minLikes !== undefined) {
@@ -111,7 +100,6 @@ async getPosts(queryParams = {}, currentUserId = null) {
     }
   }
 
-  // Views count filter
   if (minViews !== undefined || maxViews !== undefined) {
     where.views = {};
     if (minViews !== undefined) {
@@ -126,14 +114,13 @@ async getPosts(queryParams = {}, currentUserId = null) {
   const skip = (parseInt(page) - 1) * take;
 
   const orderBy = [];
-  const validSortFields = ['createdAt', 'updatedAt', 'likesCount', 'views', 'title'];
+  const validSortFields = ['createdAt', 'updatedAt', 'likesCount', 'views'];
   if (validSortFields.includes(sortBy)) {
     orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
   } else {
     orderBy.push({ createdAt: 'desc' });
   }
 
-  // Get posts with their relations
   const [posts, total] = await Promise.all([
     prisma.post.findMany({
       where,
@@ -149,7 +136,6 @@ async getPosts(queryParams = {}, currentUserId = null) {
             avatar: true,
           },
         },
-        // Include recent comments (limit to 3 per post for preview)
         comments: {
           take: 3,
           orderBy: {
@@ -166,7 +152,6 @@ async getPosts(queryParams = {}, currentUserId = null) {
             },
           },
         },
-        // Include likes with user info
         likes: {
           include: {
             user: {
@@ -190,16 +175,14 @@ async getPosts(queryParams = {}, currentUserId = null) {
     prisma.post.count({ where }),
   ]);
 
-
   return {
     meta: {
       page: parseInt(page),
       limit: take,
       total,
       totalPages: Math.ceil(total / take),
-     
     },
-    posts: posts,
+    posts,
   };
 }
   async getPostById(postId, currentUserId = null) {
@@ -290,14 +273,24 @@ async getPosts(queryParams = {}, currentUserId = null) {
       throw new ForbiddenError('You can only edit your own posts');
     }
 
+    const sourceLocale = data.sourceLang || 'en';
+    const updateData = {};
+    if (data.title !== undefined) {
+      updateData.title = data.title == null ? null : await expandI18n(data.title, { sourceLocale });
+    }
+    if (data.content !== undefined) {
+      updateData.content = await expandI18n(data.content, { sourceLocale });
+    }
+    if (data.category !== undefined) {
+      updateData.category = data.category == null ? null : await expandI18n(data.category, { sourceLocale });
+    }
+    if (data.subCategory !== undefined) {
+      updateData.subCategory = data.subCategory == null ? null : await expandI18n(data.subCategory, { sourceLocale });
+    }
+
     const updatedPost = await prisma.post.update({
       where: { id: postId },
-      data: {
-        title: data.title !== undefined ? data.title : undefined,
-        content: data.content !== undefined ? data.content : undefined,
-        category: data.category !== undefined ? data.category : undefined,
-        subCategory: data.subCategory !== undefined ? data.subCategory : undefined,
-      },
+      data: updateData,
       include: {
         user: {
           select: {
@@ -444,7 +437,7 @@ async getPosts(queryParams = {}, currentUserId = null) {
 
   // ==================== COMMENTS ====================
 
-  async addComment(postId, userId, content) {
+  async addComment(postId, userId, data) {
     const post = await prisma.post.findFirst({
       where: { id: postId, isDeleted: false },
     });
@@ -452,6 +445,8 @@ async getPosts(queryParams = {}, currentUserId = null) {
     if (!post) {
       throw new NotFoundError('Post not found');
     }
+
+    const content = await expandI18n(data.content, { sourceLocale: data.sourceLang || 'en' });
 
     const comment = await prisma.comment.create({
       data: {
@@ -542,7 +537,7 @@ async getPosts(queryParams = {}, currentUserId = null) {
     return { success: true, message: 'Comment deleted successfully' };
   }
 
-  async updateComment(commentId, userId, content) {
+  async updateComment(commentId, userId, data) {
     const comment = await prisma.comment.findUnique({
       where: { id: commentId },
     });
@@ -554,6 +549,8 @@ async getPosts(queryParams = {}, currentUserId = null) {
     if (comment.userId !== userId) {
       throw new ForbiddenError('You can only edit your own comments');
     }
+
+    const content = await expandI18n(data.content, { sourceLocale: data.sourceLang || 'en' });
 
     const updatedComment = await prisma.comment.update({
       where: { id: commentId },

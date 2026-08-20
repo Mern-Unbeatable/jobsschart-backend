@@ -77,6 +77,8 @@ const schema = z
     // Backward-compat aliases from existing .env naming
     webhookurl: z.string().url().optional(),
     webhooksecrte: z.string().optional(),
+
+    GOOGLE_TRANSLATE_API_KEY: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // Production validation

@@ -46,7 +46,7 @@ class PackageController {
 
   createPackage = catchAsync(async (req, res) => {
     const data = createPackageSchema.parse(req.body);
-    this.log.info(`Admin: creating package "${data.name}"`);
+    this.log.info('Admin: creating package');
     const pkg = await packageService.createPackage(data);
     ResponseHandler.created(res, {
       message: 'Package created successfully',

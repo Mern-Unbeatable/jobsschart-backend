@@ -2,7 +2,7 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ConflictError } from '../../shared/globals/helpers/error-handler.js';
-import { generateSlug, makeSlugUnique } from '../../shared/utils/slug-utils.js';
+import { expandI18n, jsonLocaleSearch, pickSourceText } from '../../shared/services/translate.service.js';
 
 const log = new Logger('BlogCategoryService');
 
@@ -15,10 +15,10 @@ class BlogCategoryService {
 
         const where = {};
         if (queryParams.search) {
-            where.name = { contains: queryParams.search, mode: 'insensitive' };
+            where.OR = jsonLocaleSearch(['name'], queryParams.search);
         }
 
-        const sortField = queryParams.sortBy || 'name';
+        const sortField = queryParams.sortBy === 'name' ? 'createdAt' : (queryParams.sortBy || 'createdAt');
         const sortOrder = queryParams.sortOrder === 'desc' ? 'desc' : 'asc';
 
         const [categories, total] = await Promise.all([
@@ -88,19 +88,13 @@ class BlogCategoryService {
 
 
     async createCategory(data) {
-
-        const existing = await prisma.blogCategory.findFirst({
-            where: { name: { equals: data.name, mode: 'insensitive' } },
-        });
-        if (existing) throw new ConflictError(`Category "${data.name}" already exists`);
+        const name = await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' });
 
         const category = await prisma.blogCategory.create({
-            data: {
-                name: data.name
-            },
+            data: { name },
         });
 
-        log.info(`Blog category created: ${category.id} — "${category.name}"`);
+        log.info(`Blog category created: ${category.id}`);
         return category;
     }
 
@@ -110,13 +104,8 @@ class BlogCategoryService {
 
         const updateData = {};
 
-        if (data.name && data.name !== category.name) {
-            const existing = await prisma.blogCategory.findFirst({
-                where: { name: { equals: data.name, mode: 'insensitive' }, NOT: { id } },
-            });
-            if (existing) throw new ConflictError(`Category "${data.name}" already exists`);
-            updateData.name = data.name;
-
+        if (data.name) {
+            updateData.name = await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' });
         }
 
 
@@ -125,7 +114,7 @@ class BlogCategoryService {
             data: updateData,
         });
 
-        log.info(`Blog category updated: ${id} — "${updated.name}"`);
+        log.info(`Blog category updated: ${id}`);
         return updated;
     }
 
@@ -135,7 +124,7 @@ class BlogCategoryService {
 
         const blogCount = await prisma.blog.count({ where: { categoryId: id } });
         if (blogCount > 0) {
-            throw new ConflictError(`Cannot delete category "${category.name}" because it has ${blogCount} blog(s).`);
+            throw new ConflictError(`Cannot delete category because it has ${blogCount} blog(s).`);
         }
 
         await prisma.blogCategory.delete({ where: { id } });

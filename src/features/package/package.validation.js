@@ -1,8 +1,9 @@
 // src/features/package/package.validation.js
 import { z } from 'zod';
+import { i18nText, optionalI18nText, sourceLangSchema } from '../../shared/globals/helpers/i18n-schema.js';
 
 export const createPackageSchema = z.object({
-  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  name: i18nText(z.string().min(2, 'Name must be at least 2 characters').max(100)),
   slug: z
     .string()
     .min(2)
@@ -11,14 +12,15 @@ export const createPackageSchema = z.object({
   price: z.number().positive('Price must be positive'),
   minutes: z.number().int().min(0, 'Minutes must be 0 or positive').optional(),
   credits: z.number().int().positive('Credits must be a positive integer').optional(),
-  description: z.string().min(10, 'Description must be at least 10 characters').max(500).optional(),
-  features: z.array(z.string().min(1)).max(20).optional().default([]),
+  description: optionalI18nText(z.string().min(10, 'Description must be at least 10 characters').max(500)),
+  features: z.union([z.array(z.string().min(1)).max(20), z.object({ en: z.array(z.string()).optional(), nl: z.array(z.string()).optional() })]).optional(),
   isActive: z.boolean().optional().default(true),
   sortOrder: z.number().int().min(0).optional().default(0),
+  sourceLang: sourceLangSchema,
 });
 
 export const updatePackageSchema = z.object({
-  name: z.string().min(2).max(100).optional(),
+  name: optionalI18nText(z.string().min(2).max(100)),
   slug: z
     .string()
     .min(2)
@@ -28,10 +30,11 @@ export const updatePackageSchema = z.object({
   price: z.number().positive().optional(),
   minutes: z.number().int().min(0).optional(),
   credits: z.number().int().positive().optional(),
-  description: z.string().min(10).max(500).optional(),
-  features: z.array(z.string().min(1)).max(20).optional(),
+  description: optionalI18nText(z.string().min(10).max(500)),
+  features: z.union([z.array(z.string().min(1)).max(20), z.object({ en: z.array(z.string()).optional(), nl: z.array(z.string()).optional() })]).optional(),
   isActive: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+  sourceLang: sourceLangSchema,
 });
 
 export const getPackagesQuerySchema = z.object({

@@ -58,6 +58,8 @@ class Config {
   MOLLIE_LOCALE = env.MOLLIE_LOCALE || 'nl_NL';
   HAS_MOLLIE = !!(env.MOLLIE_API_KEY || env.MOLLIE_API_KEY_LIVE || env.MOLLIE_API_KEY_TEST);
 
+  GOOGLE_TRANSLATE_API_KEY = env.GOOGLE_TRANSLATE_API_KEY;
+
   logger;
   cloudinary;
 

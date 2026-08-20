@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { i18nText, optionalI18nText, sourceLangSchema } from '../../shared/globals/helpers/i18n-schema.js';
 
 const tagsField = z
   .union([z.string(), z.array(z.string())])
@@ -38,32 +39,34 @@ const optionalImage = z
 
 export const createActivitySchema = z.object({
   type: activityTypeField,
-  title: z.string().min(1, 'Title is required'),
-  description: z.string().min(1, 'Description is required'),
+  title: i18nText(z.string().min(1, 'Title is required')),
+  description: i18nText(z.string().min(1, 'Description is required')),
   host: z.string().min(1, 'Host name is required'),
   date: dateField,
   time: z.string().min(1, 'Time is required'),
-  hostTitle: optionalText(200),
+  hostTitle: optionalI18nText(z.string().max(200)),
   price: optionalText(50),
-  location: optionalText(300),
-  duration: optionalText(50),
+  location: optionalI18nText(z.string().max(300)),
+  duration: optionalI18nText(z.string().max(50)),
   tags: tagsField,
   image: optionalImage,
+  sourceLang: sourceLangSchema,
 });
 
 export const updateActivitySchema = z.object({
   type: activityTypeField.optional(),
-  title: z.string().min(1).optional(),
-  description: z.string().optional(),
+  title: optionalI18nText(z.string().min(1)),
+  description: optionalI18nText(z.string()),
   host: z.string().optional(),
   date: dateField.optional(),
   time: z.string().optional(),
-  hostTitle: optionalText(200),
+  hostTitle: optionalI18nText(z.string().max(200)),
   price: optionalText(50),
-  location: optionalText(200),
-  duration: optionalText(50),
+  location: optionalI18nText(z.string().max(200)),
+  duration: optionalI18nText(z.string().max(50)),
   tags: tagsField,
   image: optionalImage,
+  sourceLang: sourceLangSchema,
 });
 
 export const registerActivitySchema = z.object({

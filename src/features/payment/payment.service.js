@@ -3,6 +3,7 @@ import { prisma } from '../../config/db.js';
 import { config } from '../../config/config.js';
 import { Logger } from '../../config/logger.js';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, pickSourceText } from '../../shared/services/translate.service.js';
 
 const log = new Logger('PaymentService');
 const MOLLIE_API_BASE = 'https://api.mollie.com/v2';
@@ -320,7 +321,8 @@ class PaymentService {
         benefit,
         websiteUrl,
         businessType,
-        businessName
+        businessName,
+        sourceLang,
       } = donationData;
 
       if (!donorType || !name || !donorPhone || !email || !donationAmount || !benefit) {
@@ -336,14 +338,19 @@ class PaymentService {
         imageUrl = donationData.image;
       }
 
+      const locale = sourceLang || 'en';
+      const benefitText = pickSourceText(benefit, locale);
+      const descriptionText = description ? pickSourceText(description, locale) : '';
+      const locationText = location ? pickSourceText(location, locale) : '';
+
       metadata.donorType = donorType;
       metadata.donorName = name.substring(0, 490);
       metadata.donorPhone = donorPhone.substring(0, 40);
       metadata.donorEmail = email.substring(0, 490);
       metadata.donationAmount = String(donationAmount);
-      metadata.benefit = benefit.substring(0, 490);
+      metadata.benefit = benefitText.substring(0, 490);
+      metadata.sourceLang = locale;
 
-      // CRITICAL FIX: Add business fields to metadata
       if (businessName && businessName.trim() !== '') {
         metadata.businessName = businessName.substring(0, 490);
       }
@@ -354,8 +361,8 @@ class PaymentService {
         metadata.businessType = businessType;
       }
 
-      if (description) metadata.donationDescription = description.substring(0, 490);
-      if (location) metadata.donationLocation = location.substring(0, 490);
+      if (descriptionText) metadata.donationDescription = descriptionText.substring(0, 490);
+      if (locationText) metadata.donationLocation = locationText.substring(0, 490);
       if (imageUrl) metadata.donationImage = imageUrl.substring(0, 490);
 
     } else if (type === 'WEBSHOP') {
@@ -375,7 +382,7 @@ class PaymentService {
       for (const item of cartItems) {
         const product = products.find((p) => p.id === item.productId);
         if (product.stock < item.quantity) {
-          throw new Error(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
+          throw new Error(`Insufficient stock for "${pickSourceText(product.name)}". Available: ${product.stock}`);
         }
         amount += Number(product.price) * item.quantity;
       }
@@ -570,7 +577,7 @@ class PaymentService {
           amount: credits,
           balanceBefore,
           balanceAfter,
-          description: `Purchased package: ${pkg.name}`,
+          description: `Purchased package: ${pickSourceText(pkg.name)}`,
         },
       });
 
@@ -592,7 +599,7 @@ class PaymentService {
       });
     });
 
-    log.info(`Package "${pkg.name}": +${credits} credits → user ${userId}`);
+    log.info(`Package "${pickSourceText(pkg.name)}": +${credits} credits → user ${userId}`);
   }
 
   async _saveDonation(paymentData) {
@@ -613,6 +620,16 @@ class PaymentService {
     }
 
     await prisma.$transaction(async (tx) => {
+      const sourceLocale = m.sourceLang || 'en';
+      const benefitI18n = await expandI18n(m.benefit, { sourceLocale });
+      const descriptionI18n = m.donationDescription
+        ? await expandI18n(m.donationDescription, { sourceLocale })
+        : null;
+      const locationI18n = m.donationLocation
+        ? await expandI18n(m.donationLocation, { sourceLocale })
+        : null;
+      const benefitText = pickSourceText(benefitI18n, sourceLocale);
+
       const donationData = {
         donorId,
         donorType: m.donorType,
@@ -620,10 +637,10 @@ class PaymentService {
         phone: m.donorPhone,
         email: m.donorEmail,
         amount: donationAmount,
-        description: m.donationDescription || null,
-        location: m.donationLocation || null,
+        description: descriptionI18n,
+        location: locationI18n,
         image: m.donationImage || null,
-        benefit: m.benefit,
+        benefit: benefitI18n,
         businessName: m.businessName || null,
         websiteUrl: m.websiteUrl || null,
         businessType: m.businessType || 'LOCAL_BUSINESS',
@@ -641,8 +658,8 @@ class PaymentService {
       await tx.adCampaign.create({
         data: {
           donorId,
-          title: `Donation Campaign - ${m.benefit}`,
-          description: m.donationDescription || null,
+          title: await expandI18n(`Donation Campaign - ${benefitText}`, { sourceLocale }),
+          description: descriptionI18n,
           image: m.donationImage || null,
           budget: donationAmount,
           spentAmount: 0,

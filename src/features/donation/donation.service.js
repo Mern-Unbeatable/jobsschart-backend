@@ -2,6 +2,7 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ForbiddenError, ConflictError } from '../../shared/globals/helpers/error-handler.js';
+import { jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 class DonationService {
     constructor() {
@@ -50,7 +51,7 @@ class DonationService {
             where.OR = [
                 { name: { contains: queryParams.search, mode: 'insensitive' } },
                 { email: { contains: queryParams.search, mode: 'insensitive' } },
-                { benefit: { contains: queryParams.search, mode: 'insensitive' } },
+                ...jsonLocaleSearch(['benefit', 'description', 'location'], queryParams.search),
             ];
         }
 

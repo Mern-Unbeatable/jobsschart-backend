@@ -1,7 +1,11 @@
 import { prisma } from '../../config/db.js';
 
 export const generateSlug = (name) => {
-    return name
+    const source = typeof name === 'string'
+        ? name
+        : (name?.en || name?.nl || '');
+
+    return String(source)
         .toLowerCase()
         .trim()
         .replace(/[^\w\s-]/g, '')

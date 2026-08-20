@@ -4,6 +4,7 @@ import {
     NotFoundError,
     ConflictError,
 } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('TopicService');
 
@@ -16,16 +17,12 @@ class TopicService {
         const where = {};
 
         if (queryParams.search) {
-            where.name = {
-                contains: queryParams.search,
-                mode: 'insensitive'
-            };
+            where.OR = jsonLocaleSearch(['name'], queryParams.search);
         }
 
-        const orderBy = {};
-        const sortField = queryParams.sortBy || 'name';
+        const sortField = queryParams.sortBy === 'name' ? 'createdAt' : (queryParams.sortBy || 'createdAt');
         const sortOrder = queryParams.sortOrder === 'desc' ? 'desc' : 'asc';
-        orderBy[sortField] = sortOrder;
+        const orderBy = { [sortField]: sortOrder };
 
         const [topics, total] = await Promise.all([
             prisma.topic.findMany({
@@ -61,26 +58,13 @@ class TopicService {
     }
 
     async createTopic(data) {
-        const existingTopic = await prisma.topic.findFirst({
-            where: {
-                name: {
-                    equals: data.name,
-                    mode: 'insensitive',
-                },
-            },
-        });
-
-        if (existingTopic) {
-            throw new ConflictError(`Topic "${data.name}" already exists`);
-        }
-
         const topic = await prisma.topic.create({
             data: {
-                name: data.name.trim(),
+                name: await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' }),
             },
         });
 
-        log.info(`Topic created: ${topic.id} — "${topic.name}"`);
+        log.info(`Topic created: ${topic.id}`);
         return topic;
     }
 
@@ -93,30 +77,16 @@ class TopicService {
             throw new NotFoundError('Topic not found');
         }
 
-        if (data.name && data.name !== topic.name) {
-            const existingTopic = await prisma.topic.findFirst({
-                where: {
-                    name: {
-                        equals: data.name,
-                        mode: 'insensitive',
-                    },
-                    NOT: { id }
-                },
-            });
-
-            if (existingTopic) {
-                throw new ConflictError(`Topic "${data.name}" already exists`);
-            }
-        }
-
         const updated = await prisma.topic.update({
             where: { id },
             data: {
-                name: data.name?.trim(),
+                name: data.name
+                    ? await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' })
+                    : undefined,
             },
         });
 
-        log.info(`Topic updated: ${id} — "${updated.name}"`);
+        log.info(`Topic updated: ${id}`);
         return updated;
     }
 
@@ -136,7 +106,7 @@ class TopicService {
         log.info(`Topic deleted: ${id} — "${topic.name}"`);
         return {
             success: true,
-            message: `Topic "${topic.name}" deleted successfully`,
+            message: 'Topic deleted successfully',
         };
     }
 }

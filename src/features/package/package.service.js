@@ -4,6 +4,7 @@ import {
   NotFoundError,
   ConflictError,
 } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, expandI18nArray, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 class PackageService {
 
@@ -22,14 +23,13 @@ class PackageService {
 
     if (queryParams.search) {
       where.OR = [
-        { name: { contains: queryParams.search, mode: 'insensitive' } },
+        ...jsonLocaleSearch(['name', 'description'], queryParams.search),
         { slug: { contains: queryParams.search, mode: 'insensitive' } },
-        { description: { contains: queryParams.search, mode: 'insensitive' } },
       ];
     }
 
     const orderBy = {};
-    const sortField = queryParams.sortBy || 'sortOrder';
+    const sortField = queryParams.sortBy === 'name' ? 'sortOrder' : (queryParams.sortBy || 'sortOrder');
     const sortOrder = queryParams.sortOrder === 'asc' ? 'asc' : 'asc';
     orderBy[sortField] = sortOrder;
 
@@ -113,15 +113,16 @@ class PackageService {
       throw new ConflictError(`Package with slug "${data.slug}" already exists`);
     }
 
+    const sourceLocale = data.sourceLang || 'en';
     return prisma.package.create({
       data: {
-        name: data.name,
+        name: await expandI18n(data.name, { sourceLocale }),
         slug: data.slug,
         price: data.price,
         minutes: data.minutes || 0,
         credits: data.credits || null,
-        description: data.description || null,
-        features: data.features || [],
+        description: data.description ? await expandI18n(data.description, { sourceLocale }) : null,
+        features: await expandI18nArray(data.features || [], { sourceLocale }),
         isActive: data.isActive ?? true,
         sortOrder: data.sortOrder ?? 0,
       },
@@ -144,14 +145,21 @@ class PackageService {
       if (slugTaken) throw new ConflictError(`Slug "${data.slug}" is already in use`);
     }
 
+    const sourceLocale = data.sourceLang || 'en';
     const updateData = {};
-    const allowedFields = ['name', 'slug', 'price', 'minutes', 'credits', 'description', 'features', 'isActive', 'sortOrder'];
+    const allowedFields = ['slug', 'price', 'minutes', 'credits', 'isActive', 'sortOrder'];
 
     allowedFields.forEach((field) => {
       if (data[field] !== undefined) {
         updateData[field] = data[field];
       }
     });
+
+    if (data.name !== undefined) updateData.name = await expandI18n(data.name, { sourceLocale });
+    if (data.description !== undefined) {
+      updateData.description = data.description ? await expandI18n(data.description, { sourceLocale }) : null;
+    }
+    if (data.features !== undefined) updateData.features = await expandI18nArray(data.features, { sourceLocale });
 
     return prisma.package.update({
       where: { id },

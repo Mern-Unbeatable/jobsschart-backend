@@ -238,8 +238,8 @@ model User {
 model Consultant {
   id                String              @id @default(uuid())
   userId            String              @unique
-  specialization    String[]
-  bio               String?
+  specialization    Json                @default("{\"en\":[],\"nl\":[]}")
+  bio               Json?
   pricePerMinute    Decimal             @default(2.50) @db.Decimal(10, 2)
   firstNMinutes     Int?
   firstNPrice       Decimal?            @db.Decimal(10, 2)
@@ -256,9 +256,8 @@ model Consultant {
   reviews           Review[]
   schedules         Schedule[]
   availabilitySlots AvailabilitySlot[]
-  category          String?
-  topics            String?
-  bioNl             String?
+  category          Json?
+  topics            Json?
   idFrontUrl        String?
   idBackUrl         String?
   bsnNumber         String?
@@ -312,7 +311,7 @@ model Review {
   consultantId String
   userId       String
   rating       Int
-  comment      String?
+  comment      Json?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   consultant   Consultant @relation(fields: [consultantId], references: [id], onDelete: Cascade)
@@ -351,15 +350,15 @@ model CreditTransaction {
 
 model Package {
   id    String  @id @default(uuid())
-  name  String
+  name  Json
   slug  String  @unique
   price Decimal @db.Decimal(10, 2)
 
   minutes Int
   credits Decimal?
 
-  description String?
-  features    String[] @default([])
+  description Json?
+  features    Json     @default("{\"en\":[],\"nl\":[]}")
   isActive    Boolean  @default(true)
 
   sortOrder Int @default(0)
@@ -414,10 +413,10 @@ model Donation {
   amount       Int
   businessType BusinessType @default(LOCAL_BUSINESS)
 
-  description String?
-  location    String?
+  description Json?
+  location    Json?
   image       String?
-  benefit     String
+  benefit     Json
   createdAt   DateTime @default(now())
 
   donor User @relation(fields: [donorId], references: [id], onDelete: Cascade)
@@ -434,8 +433,8 @@ model AdCampaign {
   donorId String
   donor   User   @relation(fields: [donorId], references: [id], onDelete: Cascade)
 
-  title       String
-  description String?
+  title       Json
+  description Json?
   image       String?
   linkUrl     String?
 
@@ -465,14 +464,14 @@ model AdCampaign {
 
 model Product {
   id          String   @id @default(uuid())
-  name        String
+  name        Json
   slug        String   @unique
-  description String
-  subTitle    String?
+  description Json
+  subTitle    Json?
   price       Decimal  @db.Decimal(10, 2)
-  features    String[] @default([])
-  whatsInside String[] @default([])
-  benefits    String[] @default([])
+  features    Json     @default("{\"en\":[],\"nl\":[]}")
+  whatsInside Json     @default("{\"en\":[],\"nl\":[]}")
+  benefits    Json     @default("{\"en\":[],\"nl\":[]}")
   gallery     String[] @default([])
   stock       Int      @default(0)
   isActive    Boolean  @default(true)
@@ -488,8 +487,7 @@ model Product {
 
 model ProductCategory {
   id        String   @id @default(cuid())
-  name      String   @unique
-  // products  Product[]
+  name      Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -645,11 +643,11 @@ model Post {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  title   String?
-  content String
+  title   Json?
+  content Json
 
-  category    String?
-  subCategory String?
+  category    Json?
+  subCategory Json?
 
   postType PostType @default(THOUGHT)
 
@@ -691,7 +689,7 @@ model Comment {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  content String
+  content Json
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -703,12 +701,12 @@ model Comment {
 model Blog {
   id              String        @id @default(uuid())
   slug            String        @unique
-  title           String?
-  content         String?
-  excerpt         String?
+  title           Json?
+  content         Json?
+  excerpt         Json?
   tags            String[]      @default([])
-  metaTitle       String?
-  metaDescription String?
+  metaTitle       Json?
+  metaDescription Json?
   isFeatured      Boolean       @default(false)
   status          BlogStatus    @default(DRAFT)
   image           String[]      @default([])
@@ -727,7 +725,7 @@ model Blog {
 
 model BlogCategory {
   id        String   @id @default(uuid())
-  name      String
+  name      Json
   blogs     Blog[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -752,8 +750,8 @@ model Notification {
 
 model Faq {
   id        String   @id @default(uuid())
-  question  String
-  answer    String
+  question  Json
+  answer    Json
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -776,15 +774,15 @@ model CommunityQuestion {
   id           String         @id @default(uuid())
   userId       String
   questionType QuestionType   @default(USER)
-  subject      String
-  question     String?
-  answer       String?
+  subject      Json
+  question     Json?
+  answer       Json?
   status       QuestionStatus @default(PENDING)
   answeredBy   String?
   answeredAt   DateTime?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
-  topic        String?
+  topic        Json?
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
@@ -902,11 +900,11 @@ model ConsultantQuery {
   consultantId String
   consultant   User   @relation(fields: [consultantId], references: [id], onDelete: Cascade)
 
-  subject  String
-  question String
+  subject  Json
+  question Json
 
-  answer     String?
-  answerHtml String?
+  answer     Json?
+  answerHtml Json?
 
   status TicketStatus @default(OPEN)
 
@@ -1119,7 +1117,7 @@ model Payout {
 
 model Category {
   id        String   @id @default(uuid())
-  name      String
+  name      Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1128,7 +1126,7 @@ model Category {
 
 model Topic {
   id        String   @id @default(uuid())
-  name      String
+  name      Json
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1143,15 +1141,15 @@ enum ActivityType {
 model Activity {
   id            String                 @id @default(uuid())
   type          ActivityType
-  title         String
-  description   String
+  title         Json
+  description   Json
   host          String
-  hostTitle     String?
+  hostTitle     Json?
   date          String
   time          String
   price         String?
-  location      String?
-  duration      String?
+  location      Json?
+  duration      Json?
   tags          String[]               @default([])
   image         String?
   createdAt     DateTime               @default(now())

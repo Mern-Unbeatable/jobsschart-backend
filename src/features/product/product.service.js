@@ -2,6 +2,7 @@ import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ConflictError } from '../../shared/globals/helpers/error-handler.js';
 import { generateSlug, makeSlugUnique } from '../../shared/utils/slug-utils.js';
+import { expandI18n, expandI18nArray, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('ProductService');
 
@@ -19,10 +20,7 @@ class ProductService {
         }
 
         if (queryParams.search) {
-            where.OR = [
-                { name: { contains: queryParams.search, mode: 'insensitive' } },
-                { description: { contains: queryParams.search, mode: 'insensitive' } },
-            ];
+            where.OR = jsonLocaleSearch(['name', 'description', 'subTitle'], queryParams.search);
         }
 
         if (queryParams.minPrice || queryParams.maxPrice) {
@@ -31,7 +29,7 @@ class ProductService {
             if (queryParams.maxPrice) where.price.lte = Number(queryParams.maxPrice);
         }
 
-        const sortField = queryParams.sortBy || 'createdAt';
+        const sortField = ['name', 'description'].includes(queryParams.sortBy) ? 'createdAt' : (queryParams.sortBy || 'createdAt');
         const sortOrder = queryParams.sortOrder === 'asc' ? 'asc' : 'desc';
 
         const [products, total] = await Promise.all([
@@ -64,7 +62,9 @@ class ProductService {
     }
 
     async createProduct(data) {
-        let slug = data.slug || generateSlug(data.name);
+        const sourceLocale = data.sourceLang || 'en';
+        const name = await expandI18n(data.name, { sourceLocale });
+        let slug = data.slug || generateSlug(name);
 
         slug = await makeSlugUnique(slug, {
             model: 'product',
@@ -74,14 +74,14 @@ class ProductService {
 
         const product = await prisma.product.create({
             data: {
-                name: data.name,
+                name,
                 slug,
-                description: data.description,
-                subTitle: data.subTitle || null,
+                description: await expandI18n(data.description, { sourceLocale }),
+                subTitle: data.subTitle ? await expandI18n(data.subTitle, { sourceLocale }) : null,
                 price: data.price,
-                features: data.features || [],
-                whatsInside: data.whatsInside || [],
-                benefits: data.benefits || [],
+                features: await expandI18nArray(data.features || [], { sourceLocale }),
+                whatsInside: await expandI18nArray(data.whatsInside || [], { sourceLocale }),
+                benefits: await expandI18nArray(data.benefits || [], { sourceLocale }),
                 gallery: data.gallery || [],
                 stock: data.stock ?? 0,
                 isActive: data.isActive ?? true,
@@ -89,7 +89,7 @@ class ProductService {
             },
         });
 
-        log.info(`Product created: ${product.id} — "${product.name}"`);
+        log.info(`Product created: ${product.id}`);
         return product;
     }
 
@@ -99,9 +99,10 @@ class ProductService {
         });
         if (!product) throw new NotFoundError('Product not found');
 
+        const sourceLocale = data.sourceLang || 'en';
         const updateData = {};
 
-        if (data.name) updateData.name = data.name;
+        if (data.name) updateData.name = await expandI18n(data.name, { sourceLocale });
 
         if (data.slug && data.slug !== product.slug) {
             updateData.slug = await makeSlugUnique(data.slug, {
@@ -109,7 +110,7 @@ class ProductService {
                 slugField: 'slug',
                 excludeId: id
             });
-        } else if (data.name && data.name !== product.name && !data.slug) {
+        } else if (data.name && !data.slug) {
             const newSlug = generateSlug(data.name);
             updateData.slug = await makeSlugUnique(newSlug, {
                 model: 'product',
@@ -118,12 +119,14 @@ class ProductService {
             });
         }
 
-        if (data.description !== undefined) updateData.description = data.description;
-        if (data.subTitle !== undefined) updateData.subTitle = data.subTitle;
+        if (data.description !== undefined) updateData.description = await expandI18n(data.description, { sourceLocale });
+        if (data.subTitle !== undefined) {
+            updateData.subTitle = data.subTitle ? await expandI18n(data.subTitle, { sourceLocale }) : null;
+        }
         if (data.price !== undefined) updateData.price = data.price;
-        if (data.features !== undefined) updateData.features = data.features;
-        if (data.whatsInside !== undefined) updateData.whatsInside = data.whatsInside;
-        if (data.benefits !== undefined) updateData.benefits = data.benefits;
+        if (data.features !== undefined) updateData.features = await expandI18nArray(data.features, { sourceLocale });
+        if (data.whatsInside !== undefined) updateData.whatsInside = await expandI18nArray(data.whatsInside, { sourceLocale });
+        if (data.benefits !== undefined) updateData.benefits = await expandI18nArray(data.benefits, { sourceLocale });
         if (data.gallery !== undefined) updateData.gallery = data.gallery;
         if (data.stock !== undefined) updateData.stock = data.stock;
         if (data.isActive !== undefined) updateData.isActive = data.isActive;

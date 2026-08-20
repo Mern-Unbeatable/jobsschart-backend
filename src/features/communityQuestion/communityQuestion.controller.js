@@ -70,9 +70,8 @@ class CommunityQuestionController {
   // Answer a question (Admin)
   answerQuestion = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { answer } = req.body;
     log.info(`Admin ${req.user.id} answering question: ${id}`);
-    const question = await communityQuestionService.answerQuestion(id, req.user.id, answer);
+    const question = await communityQuestionService.answerQuestion(id, req.user.id, req.body);
     ResponseHandler.success(res, {
       message: 'Question answered successfully',
       data: { question },
@@ -82,9 +81,8 @@ class CommunityQuestionController {
   // Update answer (Admin)
   updateAnswer = catchAsync(async (req, res) => {
     const { id } = req.params;
-    const { answer } = req.body;
     log.info(`Admin ${req.user.id} updating answer for question: ${id}`);
-    const question = await communityQuestionService.updateAnswer(id, req.user.id, answer);
+    const question = await communityQuestionService.updateAnswer(id, req.user.id, req.body);
     ResponseHandler.success(res, {
       message: 'Answer updated successfully',
       data: { question },

@@ -2,6 +2,7 @@
 import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ConflictError, BadRequestError } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('AdCampaignService');
 
@@ -20,8 +21,7 @@ class AdCampaignService {
 
         if (queryParams.search) {
             where.OR = [
-                { title: { contains: queryParams.search, mode: 'insensitive' } },
-                { description: { contains: queryParams.search, mode: 'insensitive' } },
+                ...jsonLocaleSearch(['title', 'description'], queryParams.search),
                 { donor: { name: { contains: queryParams.search, mode: 'insensitive' } } },
             ];
         }
@@ -120,10 +120,15 @@ class AdCampaignService {
         const campaign = await prisma.adCampaign.findUnique({ where: { id } });
         if (!campaign) throw new NotFoundError('Campaign not found');
 
+        const sourceLocale = data.sourceLang || 'en';
         const updateData = {};
 
-        if (data.title !== undefined) updateData.title = data.title;
-        if (data.description !== undefined) updateData.description = data.description;
+        if (data.title !== undefined) updateData.title = await expandI18n(data.title, { sourceLocale });
+        if (data.description !== undefined) {
+            updateData.description = data.description
+                ? await expandI18n(data.description, { sourceLocale })
+                : null;
+        }
         if (data.image !== undefined) updateData.image = data.image;
         if (data.linkUrl !== undefined) updateData.linkUrl = data.linkUrl;
         if (data.placements !== undefined) updateData.placements = data.placements;

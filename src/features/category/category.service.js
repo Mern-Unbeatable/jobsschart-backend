@@ -4,6 +4,7 @@ import {
     NotFoundError,
     ConflictError,
 } from '../../shared/globals/helpers/error-handler.js';
+import { expandI18n, jsonLocaleSearch } from '../../shared/services/translate.service.js';
 
 const log = new Logger('CategoryService');
 
@@ -16,16 +17,12 @@ class CategoryService {
         const where = {};
 
         if (queryParams.search) {
-            where.name = {
-                contains: queryParams.search,
-                mode: 'insensitive'
-            };
+            where.OR = jsonLocaleSearch(['name'], queryParams.search);
         }
 
-        const orderBy = {};
-        const sortField = queryParams.sortBy || 'name';
+        const sortField = queryParams.sortBy === 'name' ? 'createdAt' : (queryParams.sortBy || 'createdAt');
         const sortOrder = queryParams.sortOrder === 'desc' ? 'desc' : 'asc';
-        orderBy[sortField] = sortOrder;
+        const orderBy = { [sortField]: sortOrder };
 
         const [categories, total] = await Promise.all([
             prisma.category.findMany({
@@ -61,26 +58,13 @@ class CategoryService {
     }
 
     async createCategory(data) {
-        const existingCategory = await prisma.category.findFirst({
-            where: {
-                name: {
-                    equals: data.name,
-                    mode: 'insensitive',
-                },
-            },
-        });
-
-        if (existingCategory) {
-            throw new ConflictError(`Category "${data.name}" already exists`);
-        }
-
         const category = await prisma.category.create({
             data: {
-                name: data.name.trim(),
+                name: await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' }),
             },
         });
 
-        log.info(`Category created: ${category.id} — "${category.name}"`);
+        log.info(`Category created: ${category.id}`);
         return category;
     }
 
@@ -93,30 +77,16 @@ class CategoryService {
             throw new NotFoundError('Category not found');
         }
 
-        if (data.name && data.name !== category.name) {
-            const existingCategory = await prisma.category.findFirst({
-                where: {
-                    name: {
-                        equals: data.name,
-                        mode: 'insensitive',
-                    },
-                    NOT: { id }
-                },
-            });
-
-            if (existingCategory) {
-                throw new ConflictError(`Category "${data.name}" already exists`);
-            }
-        }
-
         const updated = await prisma.category.update({
             where: { id },
             data: {
-                name: data.name?.trim(),
+                name: data.name
+                    ? await expandI18n(data.name, { sourceLocale: data.sourceLang || 'en' })
+                    : undefined,
             },
         });
 
-        log.info(`Category updated: ${id} — "${updated.name}"`);
+        log.info(`Category updated: ${id}`);
         return updated;
     }
 
@@ -136,7 +106,7 @@ class CategoryService {
         log.info(`Category deleted: ${id} — "${category.name}"`);
         return {
             success: true,
-            message: `Category "${category.name}" deleted successfully`,
+            message: 'Category deleted successfully',
         };
     }
 }

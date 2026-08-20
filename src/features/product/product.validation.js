@@ -1,5 +1,6 @@
 
 import { z } from 'zod';
+import { i18nText, optionalI18nText, sourceLangSchema } from '../../shared/globals/helpers/i18n-schema.js';
 
 const stringOrArray = z
     .union([z.string(), z.array(z.string())])
@@ -20,10 +21,10 @@ const galleryField = z
     });
 
 export const createProductSchema = z.object({
-    name: z.string().min(2, 'Name is required').max(200),
+    name: i18nText(z.string().min(2, 'Name is required').max(200)),
     slug: z.string().min(2).max(200).regex(/^[a-z0-9-]+$/, 'Slug: lowercase letters, numbers, hyphens only').optional(),
-    description: z.string().min(10, 'Description must be at least 10 characters'),
-    subTitle: z.string().max(300).optional().nullable(),
+    description: i18nText(z.string().min(10, 'Description must be at least 10 characters')),
+    subTitle: optionalI18nText(z.string().max(300)),
     price: z.coerce.number().positive('Price must be positive'),
     stock: z.coerce.number().int().min(0).default(0),
 
@@ -35,13 +36,14 @@ export const createProductSchema = z.object({
     benefits: stringOrArray,
     gallery: galleryField,
     productCategory: z.string().optional().nullable(),
+    sourceLang: sourceLangSchema,
 });
 
 export const updateProductSchema = z.object({
-    name: z.string().min(2).max(200).optional(),
+    name: optionalI18nText(z.string().min(2).max(200)),
     slug: z.string().min(2).max(200).regex(/^[a-z0-9-]+$/).optional(),
-    description: z.string().min(10).optional(),
-    subTitle: z.string().max(300).optional().nullable(),
+    description: optionalI18nText(z.string().min(10)),
+    subTitle: optionalI18nText(z.string().max(300)),
     price: z.coerce.number().positive().optional(),
     stock: z.coerce.number().int().min(0).optional(),
     isActive: z.union([z.boolean(), z.string()])
@@ -52,6 +54,7 @@ export const updateProductSchema = z.object({
     benefits: stringOrArray,
     gallery: galleryField,
     productCategory: z.string().uuid('Invalid category ID').optional().nullable(),
+    sourceLang: sourceLangSchema,
 });
 
 export const updateStockSchema = z.object({

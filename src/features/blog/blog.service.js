@@ -2,8 +2,18 @@ import { prisma } from '../../config/db.js';
 import { Logger } from '../../config/logger.js';
 import { NotFoundError, ConflictError } from '../../shared/globals/helpers/error-handler.js';
 import { generateSlug, makeSlugUnique } from '../../shared/utils/slug-utils.js';
+import { expandI18n, jsonLocaleSearch, pickSourceText } from '../../shared/services/translate.service.js';
 
 const log = new Logger('BlogService');
+
+function normalizeImageArray(value) {
+    if (value == null) return [];
+    if (Array.isArray(value)) return value.filter(Boolean);
+    if (typeof value === 'string' && value.trim()) {
+        return value.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+    return [];
+}
 
 class BlogService {
 
@@ -34,7 +44,7 @@ class BlogService {
         // Filter by category name
         if (category) {
             where.category = {
-                name: { contains: category, mode: 'insensitive' }
+                OR: jsonLocaleSearch(['name'], category),
             };
         }
 
@@ -57,9 +67,7 @@ class BlogService {
         if (search) {
             const searchTerm = search.trim();
             where.OR = [
-                { title: { contains: searchTerm, mode: 'insensitive' } },
-                { content: { contains: searchTerm, mode: 'insensitive' } },
-                { excerpt: { contains: searchTerm, mode: 'insensitive' } },
+                ...jsonLocaleSearch(['title', 'content', 'excerpt'], searchTerm),
                 { slug: { contains: searchTerm.replace(/\s+/g, '-'), mode: 'insensitive' } }
             ];
         }
@@ -71,7 +79,7 @@ class BlogService {
 
         // Handle sorting
         const orderBy = [];
-        const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'title', 'readTime'];
+        const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'readTime'];
         if (validSortFields.includes(sortBy)) {
             orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
         } else {
@@ -148,7 +156,7 @@ class BlogService {
 
         if (category) {
             where.category = {
-                name: { contains: category, mode: 'insensitive' }
+                OR: jsonLocaleSearch(['name'], category),
             };
         }
 
@@ -167,9 +175,7 @@ class BlogService {
         if (search) {
             const searchTerm = search.trim();
             where.OR = [
-                { title: { contains: searchTerm, mode: 'insensitive' } },
-                { content: { contains: searchTerm, mode: 'insensitive' } },
-                { excerpt: { contains: searchTerm, mode: 'insensitive' } },
+                ...jsonLocaleSearch(['title', 'content', 'excerpt'], searchTerm),
                 { slug: { contains: searchTerm.replace(/\s+/g, '-'), mode: 'insensitive' } }
             ];
         }
@@ -179,7 +185,7 @@ class BlogService {
         const skip = (pageNumber - 1) * take;
 
         const orderBy = [];
-        const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'title', 'readTime', 'status'];
+        const validSortFields = ['createdAt', 'updatedAt', 'publishedAt', 'readTime', 'status'];
         if (validSortFields.includes(sortBy)) {
             orderBy.push({ [sortBy]: sortOrder === 'asc' ? 'asc' : 'desc' });
         } else {
@@ -308,9 +314,14 @@ class BlogService {
 
     // Create a new blog
     async createBlog(data) {
-        console.log('blog data check this ', data);
+        const sourceLocale = data.sourceLang || 'en';
+        const title = await expandI18n(data.title, { sourceLocale });
+        const content = data.content != null ? await expandI18n(data.content, { html: true, sourceLocale }) : null;
+        const excerpt = data.excerpt != null ? await expandI18n(data.excerpt, { sourceLocale }) : null;
+        const metaTitle = data.metaTitle != null ? await expandI18n(data.metaTitle, { sourceLocale }) : null;
+        const metaDescription = data.metaDescription != null ? await expandI18n(data.metaDescription, { sourceLocale }) : null;
 
-        let slug = data.slug || generateSlug(data.title);
+        let slug = data.slug || generateSlug(title);
 
         // Make slug unique
         slug = await makeSlugUnique(slug, {
@@ -321,7 +332,7 @@ class BlogService {
 
         // Calculate read time
         const wordsPerMinute = 200;
-        const wordCount = data.content?.trim().split(/\s+/).length || 0;
+        const wordCount = pickSourceText(content).trim().split(/\s+/).filter(Boolean).length || 0;
         const readTime = Math.max(1, Math.ceil(wordCount / wordsPerMinute));
 
         // Validate category if provided
@@ -339,16 +350,16 @@ class BlogService {
         // Create blog with all fields
         const blog = await prisma.blog.create({
             data: {
-                title: data.title,
+                title,
                 slug,
-                content: data.content || '',
-                excerpt: data.excerpt || null,
+                content: content || { en: '', nl: '' },
+                excerpt,
                 tags: data.tags || [],
-                metaTitle: data.metaTitle || null,
-                metaDescription: data.metaDescription || null,
+                metaTitle,
+                metaDescription,
                 isFeatured: data.isFeatured || false,
                 status: status,
-                image: data.image || null,
+                image: normalizeImageArray(data.image),
                 readTime: readTime,
                 categoryId: data.categoryId || null,
                 publishedAt: publishedAt,
@@ -366,7 +377,7 @@ class BlogService {
             },
         });
 
-        log.info(`Blog created: ${blog.id} — "${blog.title}" (Status: ${blog.status})`);
+        log.info(`Blog created: ${blog.id} (Status: ${blog.status})`);
         return { blog };
     }
 
@@ -378,6 +389,7 @@ class BlogService {
         });
         if (!blog) throw new NotFoundError('Blog not found');
 
+        const sourceLocale = data.sourceLang || 'en';
         const updateData = {};
 
         // Handle slug update
@@ -400,19 +412,23 @@ class BlogService {
         // Update read time based on content
         if (data.content) {
             const wordsPerMinute = 200;
-            const wordCount = data.content.trim().split(/\s+/).length;
+            const wordCount = pickSourceText(data.content).trim().split(/\s+/).filter(Boolean).length;
             updateData.readTime = Math.max(1, Math.ceil(wordCount / wordsPerMinute));
         }
 
         // Update basic fields
-        if (data.title !== undefined) updateData.title = data.title;
-        if (data.content !== undefined) updateData.content = data.content;
-        if (data.excerpt !== undefined) updateData.excerpt = data.excerpt;
+        if (data.title !== undefined) updateData.title = await expandI18n(data.title, { sourceLocale });
+        if (data.content !== undefined) updateData.content = await expandI18n(data.content, { html: true, sourceLocale });
+        if (data.excerpt !== undefined) updateData.excerpt = data.excerpt == null ? null : await expandI18n(data.excerpt, { sourceLocale });
         if (data.tags !== undefined) updateData.tags = data.tags;
-        if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle;
-        if (data.metaDescription !== undefined) updateData.metaDescription = data.metaDescription;
+        if (data.metaTitle !== undefined) updateData.metaTitle = data.metaTitle == null ? null : await expandI18n(data.metaTitle, { sourceLocale });
+        if (data.metaDescription !== undefined) {
+            updateData.metaDescription = data.metaDescription == null
+                ? null
+                : await expandI18n(data.metaDescription, { sourceLocale });
+        }
         if (data.isFeatured !== undefined) updateData.isFeatured = data.isFeatured;
-        if (data.image !== undefined) updateData.image = data.image;
+        if (data.image !== undefined) updateData.image = normalizeImageArray(data.image);
 
         // Handle status changes and publishedAt
         if (data.status !== undefined) {

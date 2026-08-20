@@ -1,4 +1,18 @@
 // src/shared/globals/helpers/response.handler.js
+import { localizeTree } from '../../services/translate.service.js';
+
+function maybeLocalize(res, data) {
+  if (data == null) return data;
+
+  // Default: return DB shape — title/content as { en, nl } objects.
+  // Optional: ?i18n=localized picks one locale string (+ *I18n copies) for legacy clients.
+  const localized = res.req?.query?.i18n === 'localized';
+  if (!localized) return data;
+
+  const locale = res.req?.locale || 'en';
+  return localizeTree(data, locale);
+}
+
 export class ResponseHandler {
   static success(
     res,
@@ -12,7 +26,7 @@ export class ResponseHandler {
     const response = {
       success: true,
       message,
-      data,
+      data: maybeLocalize(res, data),
     };
 
     if (meta) {
