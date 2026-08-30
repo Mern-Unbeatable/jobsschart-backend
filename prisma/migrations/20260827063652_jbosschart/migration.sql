@@ -71,6 +71,9 @@ CREATE TYPE "SupportMessageType" AS ENUM ('QUESTION', 'ANSWER');
 CREATE TYPE "DayOfWeek" AS ENUM ('SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY');
 
 -- CreateEnum
+CREATE TYPE "VerificationStatus" AS ENUM ('UNVERIFIED', 'PENDING', 'VERIFIED', 'REJECTED');
+
+-- CreateEnum
 CREATE TYPE "BusinessType" AS ENUM ('LOCAL_BUSINESS', 'ONLINE_BUSINESS');
 
 -- CreateEnum
@@ -83,7 +86,7 @@ CREATE TYPE "QuestionType" AS ENUM ('USER', 'CONSULTANT');
 CREATE TYPE "ChatSessionType" AS ENUM ('CHAT', 'AUDIO', 'VIDEO');
 
 -- CreateEnum
-CREATE TYPE "ChatSessionStatus" AS ENUM ('IDLE', 'ACTIVE', 'ENDED');
+CREATE TYPE "ChatSessionStatus" AS ENUM ('IDLE', 'PENDING', 'ACTIVE', 'ENDED');
 
 -- CreateEnum
 CREATE TYPE "SessionSourceType" AS ENUM ('PHONE', 'VIDEO', 'CHAT');
@@ -96,6 +99,9 @@ CREATE TYPE "PayoutStatus" AS ENUM ('PENDING', 'APPROVED', 'PROCESSING', 'COMPLE
 
 -- CreateEnum
 CREATE TYPE "PayoutMethod" AS ENUM ('BANK');
+
+-- CreateEnum
+CREATE TYPE "ActivityType" AS ENUM ('EVENT', 'WORKSHOP');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -129,8 +135,8 @@ CREATE TABLE "users" (
 CREATE TABLE "consultants" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "specialization" TEXT[],
-    "bio" TEXT,
+    "specialization" JSONB NOT NULL DEFAULT '{"en":[],"nl":[]}',
+    "bio" JSONB,
     "pricePerMinute" DECIMAL(10,2) NOT NULL DEFAULT 2.50,
     "firstNMinutes" INTEGER,
     "firstNPrice" DECIMAL(10,2),
@@ -141,8 +147,15 @@ CREATE TABLE "consultants" (
     "stripeAccountId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-    "category" TEXT,
-    "topics" TEXT,
+    "category" JSONB,
+    "topics" JSONB,
+    "idFrontUrl" TEXT,
+    "idBackUrl" TEXT,
+    "bsnNumber" TEXT,
+    "kvkNumber" TEXT,
+    "cityOfResidence" TEXT,
+    "businessBankAccount" TEXT,
+    "verificationStatus" "VerificationStatus" NOT NULL DEFAULT 'UNVERIFIED',
 
     CONSTRAINT "consultants_pkey" PRIMARY KEY ("id")
 );
@@ -180,7 +193,7 @@ CREATE TABLE "reviews" (
     "consultantId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "rating" INTEGER NOT NULL,
-    "comment" TEXT,
+    "comment" JSONB,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -215,13 +228,13 @@ CREATE TABLE "credit_transactions" (
 -- CreateTable
 CREATE TABLE "packages" (
     "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
+    "name" JSONB NOT NULL,
     "slug" TEXT NOT NULL,
     "price" DECIMAL(10,2) NOT NULL,
     "minutes" INTEGER NOT NULL,
     "credits" DECIMAL(65,30),
-    "description" TEXT,
-    "features" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "description" JSONB,
+    "features" JSONB NOT NULL DEFAULT '{"en":[],"nl":[]}',
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "sortOrder" INTEGER NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -257,10 +270,10 @@ CREATE TABLE "donations" (
     "websiteUrl" TEXT,
     "amount" INTEGER NOT NULL,
     "businessType" "BusinessType" NOT NULL DEFAULT 'LOCAL_BUSINESS',
-    "description" TEXT,
-    "location" TEXT,
+    "description" JSONB,
+    "location" JSONB,
     "image" TEXT,
-    "benefit" TEXT NOT NULL,
+    "benefit" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "donations_pkey" PRIMARY KEY ("id")
@@ -270,8 +283,8 @@ CREATE TABLE "donations" (
 CREATE TABLE "ad_campaigns" (
     "id" TEXT NOT NULL,
     "donorId" TEXT NOT NULL,
-    "title" TEXT NOT NULL,
-    "description" TEXT,
+    "title" JSONB NOT NULL,
+    "description" JSONB,
     "image" TEXT,
     "linkUrl" TEXT,
     "budget" DECIMAL(10,2) NOT NULL,
@@ -294,14 +307,14 @@ CREATE TABLE "ad_campaigns" (
 -- CreateTable
 CREATE TABLE "products" (
     "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
+    "name" JSONB NOT NULL,
     "slug" TEXT NOT NULL,
-    "description" TEXT NOT NULL,
-    "subTitle" TEXT,
+    "description" JSONB NOT NULL,
+    "subTitle" JSONB,
     "price" DECIMAL(10,2) NOT NULL,
-    "features" TEXT[] DEFAULT ARRAY[]::TEXT[],
-    "whatsInside" TEXT[] DEFAULT ARRAY[]::TEXT[],
-    "benefits" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "features" JSONB NOT NULL DEFAULT '{"en":[],"nl":[]}',
+    "whatsInside" JSONB NOT NULL DEFAULT '{"en":[],"nl":[]}',
+    "benefits" JSONB NOT NULL DEFAULT '{"en":[],"nl":[]}',
     "gallery" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "stock" INTEGER NOT NULL DEFAULT 0,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
@@ -315,7 +328,7 @@ CREATE TABLE "products" (
 -- CreateTable
 CREATE TABLE "ProductCategory" (
     "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
+    "name" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -434,10 +447,10 @@ CREATE TABLE "call_files" (
 CREATE TABLE "Post" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "title" TEXT,
-    "content" TEXT NOT NULL,
-    "category" TEXT,
-    "subCategory" TEXT,
+    "title" JSONB,
+    "content" JSONB NOT NULL,
+    "category" JSONB,
+    "subCategory" JSONB,
     "postType" "PostType" NOT NULL DEFAULT 'THOUGHT',
     "likesCount" INTEGER NOT NULL DEFAULT 0,
     "views" INTEGER NOT NULL DEFAULT 0,
@@ -464,7 +477,7 @@ CREATE TABLE "Comment" (
     "id" TEXT NOT NULL,
     "postId" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
-    "content" TEXT NOT NULL,
+    "content" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -475,12 +488,12 @@ CREATE TABLE "Comment" (
 CREATE TABLE "blogs" (
     "id" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
-    "title" TEXT,
-    "content" TEXT,
-    "excerpt" TEXT,
+    "title" JSONB,
+    "content" JSONB,
+    "excerpt" JSONB,
     "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
-    "metaTitle" TEXT,
-    "metaDescription" TEXT,
+    "metaTitle" JSONB,
+    "metaDescription" JSONB,
     "isFeatured" BOOLEAN NOT NULL DEFAULT false,
     "status" "BlogStatus" NOT NULL DEFAULT 'DRAFT',
     "image" TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -497,7 +510,7 @@ CREATE TABLE "blogs" (
 -- CreateTable
 CREATE TABLE "blog_categories" (
     "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
+    "name" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -521,8 +534,8 @@ CREATE TABLE "notifications" (
 -- CreateTable
 CREATE TABLE "faqs" (
     "id" TEXT NOT NULL,
-    "question" TEXT NOT NULL,
-    "answer" TEXT NOT NULL,
+    "question" JSONB NOT NULL,
+    "answer" JSONB NOT NULL,
     "sortOrder" INTEGER NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -535,15 +548,15 @@ CREATE TABLE "community_questions" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "questionType" "QuestionType" NOT NULL DEFAULT 'USER',
-    "subject" TEXT NOT NULL,
-    "question" TEXT,
-    "answer" TEXT,
+    "subject" JSONB NOT NULL,
+    "question" JSONB,
+    "answer" JSONB,
     "status" "QuestionStatus" NOT NULL DEFAULT 'PENDING',
     "answeredBy" TEXT,
     "answeredAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
-    "topic" TEXT,
+    "topic" JSONB,
 
     CONSTRAINT "community_questions_pkey" PRIMARY KEY ("id")
 );
@@ -618,10 +631,10 @@ CREATE TABLE "ConversationAnalytics" (
 CREATE TABLE "consultant_queries" (
     "id" TEXT NOT NULL,
     "consultantId" TEXT NOT NULL,
-    "subject" TEXT NOT NULL,
-    "question" TEXT NOT NULL,
-    "answer" TEXT,
-    "answerHtml" TEXT,
+    "subject" JSONB NOT NULL,
+    "question" JSONB NOT NULL,
+    "answer" JSONB,
+    "answerHtml" JSONB,
     "status" "TicketStatus" NOT NULL DEFAULT 'OPEN',
     "answeredBy" TEXT,
     "answeredAt" TIMESTAMP(3),
@@ -746,7 +759,7 @@ CREATE TABLE "payouts" (
 -- CreateTable
 CREATE TABLE "categories" (
     "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
+    "name" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -756,11 +769,43 @@ CREATE TABLE "categories" (
 -- CreateTable
 CREATE TABLE "topics" (
     "id" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
+    "name" JSONB NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "topics_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "activities" (
+    "id" TEXT NOT NULL,
+    "type" "ActivityType" NOT NULL,
+    "title" JSONB NOT NULL,
+    "description" JSONB NOT NULL,
+    "host" TEXT NOT NULL,
+    "hostTitle" JSONB,
+    "date" TEXT NOT NULL,
+    "time" TEXT NOT NULL,
+    "price" TEXT,
+    "location" JSONB,
+    "duration" JSONB,
+    "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "image" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "activities_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "activity_registrations" (
+    "id" TEXT NOT NULL,
+    "activityId" TEXT NOT NULL,
+    "fullName" TEXT NOT NULL,
+    "emailAddress" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "activity_registrations_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -783,9 +828,6 @@ CREATE INDEX "package_purchases_userId_idx" ON "package_purchases"("userId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "products_slug_key" ON "products"("slug");
-
--- CreateIndex
-CREATE UNIQUE INDEX "ProductCategory_name_key" ON "ProductCategory"("name");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "payments_orderId_key" ON "payments"("orderId");
@@ -906,6 +948,18 @@ CREATE INDEX "payouts_consultantId_idx" ON "payouts"("consultantId");
 
 -- CreateIndex
 CREATE INDEX "payouts_status_idx" ON "payouts"("status");
+
+-- CreateIndex
+CREATE INDEX "activities_type_idx" ON "activities"("type");
+
+-- CreateIndex
+CREATE INDEX "activities_date_idx" ON "activities"("date");
+
+-- CreateIndex
+CREATE INDEX "activity_registrations_activityId_idx" ON "activity_registrations"("activityId");
+
+-- CreateIndex
+CREATE INDEX "activity_registrations_emailAddress_idx" ON "activity_registrations"("emailAddress");
 
 -- AddForeignKey
 ALTER TABLE "consultants" ADD CONSTRAINT "consultants_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -1080,3 +1134,6 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_consultantUserId_fkey" FOREIGN K
 
 -- AddForeignKey
 ALTER TABLE "payouts" ADD CONSTRAINT "payouts_consultantId_fkey" FOREIGN KEY ("consultantId") REFERENCES "consultants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "activity_registrations" ADD CONSTRAINT "activity_registrations_activityId_fkey" FOREIGN KEY ("activityId") REFERENCES "activities"("id") ON DELETE CASCADE ON UPDATE CASCADE;
