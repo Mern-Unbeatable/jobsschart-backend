@@ -129,7 +129,9 @@ enum PostType {
 
 enum BlogStatus {
   DRAFT
+  PENDING_APPROVAL
   PUBLISHED
+  REJECTED
   ARCHIVED
 }
 
