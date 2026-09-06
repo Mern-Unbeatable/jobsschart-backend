@@ -30,11 +30,15 @@ class AuthController {
   _setAuthCookies(res, accessToken, refreshToken) {
     const secure = config.NODE_ENV !== 'development';
     res.cookie('accessToken', accessToken, {
-      httpOnly: true, secure, sameSite: 'lax',
+      httpOnly: true,
+      secure,
+      sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     res.cookie('refreshToken', refreshToken, {
-      httpOnly: true, secure, sameSite: 'lax',
+      httpOnly: true,
+      secure,
+      sameSite: 'lax',
       maxAge: 8 * 24 * 60 * 60 * 1000,
     });
   }
@@ -56,7 +60,7 @@ class AuthController {
       specialization,
       pricePerMinute,
       firstNMinutes,
-      firstNPrice
+      firstNPrice,
     } = validatedData;
 
     const existingUser = await authService.getUserByEmail(email);
@@ -75,12 +79,12 @@ class AuthController {
       location,
       language,
       avatar,
-      category,           // ← Add this
-      topics,             // ← Add this
-      specialization,     // ← Add this
-      pricePerMinute,     // ← Add this
-      firstNMinutes,      // ← Add this
-      firstNPrice         // ← Add this
+      category, // ← Add this
+      topics, // ← Add this
+      specialization, // ← Add this
+      pricePerMinute, // ← Add this
+      firstNMinutes, // ← Add this
+      firstNPrice, // ← Add this
     });
 
     const tokens = {
@@ -151,7 +155,11 @@ class AuthController {
 
     ResponseHandler.success(res, {
       message: 'Login successful',
-      data: { user: userWithoutPassword, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken },
+      data: {
+        user: userWithoutPassword,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      },
     });
   });
 
@@ -169,7 +177,11 @@ class AuthController {
     if (!user) throw new NotFoundError('User not found');
     if (user.refreshTokens !== refreshToken) throw new UnauthorizedError('Invalid refresh token');
 
-    const newAccessToken = Helpers.generateAccessToken({ id: user.id, email: user.email, role: user.role });
+    const newAccessToken = Helpers.generateAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    });
     const newRefreshToken = Helpers.generateRefreshToken({ id: user.id });
 
     await authService.updateRefreshToken(user.id, newRefreshToken);
@@ -178,8 +190,15 @@ class AuthController {
     ResponseHandler.success(res, {
       message: 'Token refreshed successfully',
       data: {
-        accessToken: newAccessToken, refreshToken: newRefreshToken,
-        user: { id: user.id, email: user.email, username: user.username, name: user.name, role: user.role },
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+          name: user.name,
+          role: user.role,
+        },
       },
     });
   });
@@ -189,7 +208,10 @@ class AuthController {
     if (userId) await authService.clearRefreshToken(userId);
 
     const cookieOptions = {
-      httpOnly: true, secure: config.NODE_ENV !== 'development', sameSite: 'lax', path: '/',
+      httpOnly: true,
+      secure: config.NODE_ENV !== 'development',
+      sameSite: 'lax',
+      path: '/',
     };
     res.clearCookie('accessToken', cookieOptions);
     res.clearCookie('refreshToken', cookieOptions);
@@ -256,7 +278,9 @@ class AuthController {
     if (!otp) throw new BadRequestError('OTP is required');
 
     const user = await authOtpService.verifyOtpFlow({
-      email, otp, expectedPurpose: 'password_reset',
+      email,
+      otp,
+      expectedPurpose: 'password_reset',
     });
 
     verificationStore.setVerified(email);

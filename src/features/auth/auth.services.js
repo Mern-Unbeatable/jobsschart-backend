@@ -60,7 +60,6 @@ class AuthService {
 
     if (!user) return null;
 
-
     const { password, ...userWithoutPassword } = user;
 
     return userWithoutPassword;
@@ -141,23 +140,23 @@ class AuthService {
         wallet: {
           create: {
             creditBalance: 0,
-          }
+          },
         },
         ...(userRole === 'CONSULTANT' && {
           consultant: {
             create: {
               specialization: data.specialization || [],
               bio: data.bio || null,
-              pricePerMinute: data.pricePerMinute || 2.50,
+              pricePerMinute: data.pricePerMinute || 2.5,
               firstNMinutes: data.firstNMinutes || null,
               firstNPrice: data.firstNPrice || null,
               isApproved: false,
               onlineStatus: 'OFFLINE',
               category: data.category || null,
               topics: data.topics || null,
-            }
-          }
-        })
+            },
+          },
+        }),
       },
       include: {
         wallet: true,
@@ -178,10 +177,10 @@ class AuthService {
             stripeAccountId: true,
             createdAt: true,
             updatedAt: true,
-            category: true,     // ← Add this
-            topics: true,       // ← Add this
-          }
-        }
+            category: true, // ← Add this
+            topics: true, // ← Add this
+          },
+        },
       },
     });
 
