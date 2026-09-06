@@ -43,15 +43,23 @@ class Config {
   TWILIO_VIDEO_SERVICE_SID = env.TWILIO_VIDEO_SERVICE_SID;
   HAS_TWILIO = !!(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN);
   HAS_TWILIO_VIDEO = !!(
-    env.TWILIO_ACCOUNT_SID
-    && env.TWILIO_AUTH_TOKEN
-    && env.TWILIO_API_KEY
-    && env.TWILIO_API_SECRET
+    env.TWILIO_ACCOUNT_SID &&
+    env.TWILIO_AUTH_TOKEN &&
+    env.TWILIO_API_KEY &&
+    env.TWILIO_API_SECRET
   );
 
   // Mollie
   MOLLIE_API_KEY = env.MOLLIE_API_KEY || env.MOLLIE_API_KEY_TEST || env.MOLLIE_API_KEY_LIVE;
-  MOLLIE_MODE = env.MOLLIE_API_KEY ? (env.MOLLIE_API_KEY.startsWith('test_') ? 'test' : 'live') : (env.MOLLIE_API_KEY_TEST ? 'test' : (env.MOLLIE_API_KEY_LIVE ? 'live' : 'none'));
+  MOLLIE_MODE = env.MOLLIE_API_KEY
+    ? env.MOLLIE_API_KEY.startsWith('test_')
+      ? 'test'
+      : 'live'
+    : env.MOLLIE_API_KEY_TEST
+      ? 'test'
+      : env.MOLLIE_API_KEY_LIVE
+        ? 'live'
+        : 'none';
   MOLLIE_WEBHOOK_URL = env.MOLLIE_WEBHOOK_URL || env.webhookurl || null;
   MOLLIE_WEBHOOK_SECRET = env.MOLLIE_WEBHOOK_SECRET || env.webhooksecrte || null;
   MOLLIE_CURRENCY = (env.MOLLIE_CURRENCY || 'EUR').toUpperCase();
@@ -65,8 +73,6 @@ class Config {
 
   constructor() {
     this.logger = new Logger('Config');
-
-
   }
 
   initialize() {
@@ -77,16 +83,8 @@ class Config {
         this.logger.info('Cloudinary initialized successfully');
       }
 
-      // Log configuration status
-      this.logger.info('Configuration initialized', {
-        env: this.NODE_ENV,
-        port: this.PORT,
-        backendUrl: this.BACKEND_URL,
-        frontendUrl: this.FRONTEND_URL,
-        hasTwilio: this.HAS_TWILIO,
-        hasMollie: this.HAS_MOLLIE,
-        mollieMode: this.MOLLIE_MODE,
-      });
+      // Configuration initialized
+      // Minimal logging to reduce startup noise
     } catch (error) {
       this.logger.error('Failed to initialize config', error);
       throw error;

@@ -10,13 +10,12 @@ import express from 'express';
 import passport from 'passport';
 import path from 'path';
 import fs from 'fs';
-import morgan from 'morgan';
 import { fileURLToPath } from 'url';
 import cookieParser from 'cookie-parser';
 
 import { config } from './config/config.js';
 import applicationRoutes from './routes/index.js';
-import { Logger } from './config/logger.js';
+import { Logger, createHttpLoggingMiddleware } from './config/logger.js';
 import { CustomError, ZodValidationError } from './shared/globals/helpers/error-handler.js';
 import { localeMiddleware } from './shared/globals/helpers/locale.middleware.js';
 import { initSocket } from './socket/index.js';
@@ -130,9 +129,10 @@ export class Server {
 
   getRequestHost(req) {
     const forwardedHostRaw = req.headers['x-forwarded-host'];
-    const hostRaw = typeof forwardedHostRaw === 'string' && forwardedHostRaw.length > 0
-      ? forwardedHostRaw
-      : (req.headers.host || req.hostname || '');
+    const hostRaw =
+      typeof forwardedHostRaw === 'string' && forwardedHostRaw.length > 0
+        ? forwardedHostRaw
+        : req.headers.host || req.hostname || '';
 
     let host = String(hostRaw)
       .split(',')[0]
@@ -186,7 +186,11 @@ export class Server {
       return true;
     }
 
-    if (normalized.startsWith('10.') || normalized.startsWith('192.168.') || normalized.startsWith('169.254.')) {
+    if (
+      normalized.startsWith('10.') ||
+      normalized.startsWith('192.168.') ||
+      normalized.startsWith('169.254.')
+    ) {
       return true;
     }
 
@@ -194,7 +198,11 @@ export class Server {
       return true;
     }
 
-    if (normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:')) {
+    if (
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      normalized.startsWith('fe80:')
+    ) {
       return true;
     }
 
@@ -203,9 +211,8 @@ export class Server {
 
   getClientIpFromRequest(req) {
     const xForwardedFor = req.headers['x-forwarded-for'];
-    const forwardedList = typeof xForwardedFor === 'string'
-      ? xForwardedFor.split(',').map((item) => item.trim())
-      : [];
+    const forwardedList =
+      typeof xForwardedFor === 'string' ? xForwardedFor.split(',').map((item) => item.trim()) : [];
 
     const candidates = [
       req.headers['cf-connecting-ip'],
@@ -325,11 +332,7 @@ export class Server {
       }),
     );
 
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'https://illorac.com',
-      'https://illorac.nl'
-    ];
+    const allowedOrigins = ['http://localhost:5173', 'https://illorac.com', 'https://illorac.nl'];
 
     app.use(
       cors({
@@ -366,43 +369,34 @@ export class Server {
     // ✅ cookie-parser FIRST
     app.use(cookieParser());
 
-    // HTTP request logger
-    app.use(morgan(config.NODE_ENV === 'development' ? 'dev' : 'combined'));
+    // Custom HTTP request logger - logs: method, status code, path, and response time
+    app.use(createHttpLoggingMiddleware(this.log));
 
     app.use(compression());
     app.use(json({ limit: '50mb' }));
     app.use(urlencoded({ extended: true, limit: '50mb' }));
     app.use(localeMiddleware);
 
-    // Request logging middleware
-    app.use((req, _res, next) => {
-      this.log.http(`${req.method} ${req.originalUrl}`);
-      next();
-    });
-
     app.use(passport.initialize());
   }
 
   staticFileMiddleware(app) {
-    const uploadsPath = path.join(process.cwd(), "uploads");
+    const uploadsPath = path.join(process.cwd(), 'uploads');
 
     if (!fs.existsSync(uploadsPath)) {
       fs.mkdirSync(uploadsPath, { recursive: true });
-      this.log.info(`Created uploads directory at: ${uploadsPath}`);
     }
 
     app.use(
-      "/uploads",
+      '/uploads',
       express.static(uploadsPath, {
-        dotfiles: "ignore",
+        dotfiles: 'ignore',
         etag: true,
         index: false,
-        maxAge: "1d",
+        maxAge: '1d',
         fallthrough: true,
-      })
+      }),
     );
-
-    this.log.info(`Static files served from: ${uploadsPath}`);
   }
 
   routesMiddleware(app) {
@@ -414,7 +408,7 @@ export class Server {
         success: true,
         message: 'Server is running',
         timestamp: new Date().toISOString(),
-        environment: config.NODE_ENV
+        environment: config.NODE_ENV,
       });
     });
 
@@ -428,8 +422,8 @@ export class Server {
         endpoints: {
           health: '/health',
           api: '/api/v1',
-          uploads: '/uploads'
-        }
+          uploads: '/uploads',
+        },
       });
     });
 
@@ -487,8 +481,9 @@ export class Server {
         }
       }
 
-      const country = this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME])
-        || this.normalizeCountryCode(geoData?.country_code);
+      const country =
+        this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME]) ||
+        this.normalizeCountryCode(geoData?.country_code);
       const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
       const redirectEligibleHost = GEO_SUPPORTED_HOSTS.includes(host);
 
@@ -533,11 +528,7 @@ export class Server {
     app.use((error, _req, res, _next) => {
       const isProduction = config.NODE_ENV === 'production';
 
-      this.log.error('Global error handler', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      });
+      this.log.error('Request processing error');
 
       if (error instanceof CustomError) {
         return res.status(error.statusCode).json(error.serializeErrors());
@@ -546,7 +537,9 @@ export class Server {
       if (error.name === 'ZodError') {
         const issues = error.issues || error.errors;
         if (Array.isArray(issues) && issues.length > 0) {
-          return res.status(HTTP_STATUS.BAD_REQUEST).json(new ZodValidationError(error).serializeErrors());
+          return res
+            .status(HTTP_STATUS.BAD_REQUEST)
+            .json(new ZodValidationError(error).serializeErrors());
         }
       }
 
@@ -590,8 +583,9 @@ export class Server {
           P2022: 'Database column not found. Please run pending migrations.',
         };
 
-        const message = prismaMessages[error.code]
-          || (isProduction ? 'Database operation failed' : error.message);
+        const message =
+          prismaMessages[error.code] ||
+          (isProduction ? 'Database operation failed' : error.message);
 
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
           status: 'error',
@@ -601,7 +595,10 @@ export class Server {
         });
       }
 
-      if (error.name === 'PrismaClientValidationError' || error.message?.includes('Invalid `prisma')) {
+      if (
+        error.name === 'PrismaClientValidationError' ||
+        error.message?.includes('Invalid `prisma')
+      ) {
         const argMatch = error.message?.match(/Argument `(\w+)` must not be null/);
         const missingMatch = error.message?.match(/Argument `(\w+)` is missing/);
         const friendly = argMatch
@@ -640,16 +637,9 @@ export class Server {
   }
 
   startHttpServer(httpServer) {
-    this.log.info(`Worker started (PID: ${process.pid})`);
     initSocket(httpServer);
-    this.log.info('Socket.io initialized');
-
     httpServer.listen(config.PORT, () => {
-      this.log.info(`Server running on port ${config.PORT}`);
-      this.log.info(`Environment: ${config.NODE_ENV}`);
-      this.log.info(`Static files available at: http://localhost:${config.PORT}/uploads`);
-      this.log.info(`Backend URL: ${config.BACKEND_URL || `http://localhost:${config.PORT}`}`);
-      this.log.info(`Socket server connection successfully`);
+      // Startup log handled by StartupLogger in bootstrap.js
     });
 
     httpServer.on('error', (error) => {

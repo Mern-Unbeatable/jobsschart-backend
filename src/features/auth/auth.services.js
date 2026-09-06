@@ -185,8 +185,6 @@ class AuthService {
       },
     });
 
-    this.log.info(`User created: ${user.email} with role: ${user.role}`);
-
     const { password, ...userWithoutPassword } = user;
     return userWithoutPassword;
   }

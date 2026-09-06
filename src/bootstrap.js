@@ -5,94 +5,71 @@ import { connectDatabase } from './config/db.js';
 import { seedAdmin, seedUser, seedConsultant } from './seeds/admin.seeder.js';
 import { seedPackages } from './seeds/package.seeder.js';
 import { twilioService } from './shared/services/twilio.service.js';
+import { StartupLogger } from './config/logger.js';
 import fs from 'fs';
 import path from 'path';
 const startApplication = async () => {
   const application = new Application();
+  const startupLogger = new StartupLogger();
 
   try {
-    // ✅ Use process.cwd() to match upload utility — same root every time
+    // Set startup info
+    startupLogger.setEnvironment(config.NODE_ENV);
+    startupLogger.setPort(config.PORT);
+
+    // Use process.cwd() to match upload utility — same root every time
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const tempDir = path.join(process.cwd(), 'temp');
-
-    const subDirectories = [
-      'users',
-      'avatars',
-      'blogs',
-      'calls',
-      'services',
-      'products',
-    ];
+    const subDirectories = ['users', 'avatars', 'blogs', 'calls', 'services', 'products'];
 
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
-      config.logger.info('Uploads directory created');
     }
 
     for (const subdir of subDirectories) {
       const subdirPath = path.join(uploadsDir, subdir);
       if (!fs.existsSync(subdirPath)) {
         fs.mkdirSync(subdirPath, { recursive: true });
-        config.logger.info(`Created subdirectory: ${subdir}`);
       }
     }
 
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
-      config.logger.info('Temp directory created');
     }
 
-    config.logger.info(`Uploads directory: ${uploadsDir}`);
+    // Connect to database
+    try {
+      await connectDatabase();
+      startupLogger.setDatabaseConnected(true);
+    } catch (dbError) {
+      startupLogger.addError('Database connection failed');
+      startupLogger.print();
+      process.exit(1);
+    }
 
-    await connectDatabase();
-    config.logger.info('Database connected');
-
+    // Validate Twilio (only log if misconfigured)
     if (twilioService.isConfigured()) {
       const twilioCheck = await twilioService.validateVideoCredentials();
-      if (twilioCheck.ok) {
-        config.logger.info('Twilio Video credentials validated');
-      } else {
+      if (!twilioCheck.ok) {
         config.logger.error(`Twilio Video misconfigured: ${twilioCheck.reason}`);
-        config.logger.error(
-          'Calls will fail with "Invalid Access Token issuer/subject" until '
-          + 'TWILIO_ACCOUNT_SID, TWILIO_API_KEY, and TWILIO_API_SECRET are from the same Twilio account.'
-        );
       }
-    } else {
-      config.logger.warn('Twilio Video not configured — calls will fail until env vars are set');
     }
 
-    // ✅ Run all seeds (Admin, User, Consultant)
+    // Run all seeds (Admin, User, Consultant)
     await seedAdmin();
-    config.logger.info('Admin seed check completed');
-
     await seedUser();
-    config.logger.info('User seed check completed');
-
     await seedConsultant();
-    config.logger.info('Consultant seed check completed');
-
     await seedPackages();
-    config.logger.info('Package seed check completed');
+    startupLogger.setSeedExecuted(true);
 
-    // Or use the combined function:
-    // await runAllSeeds();
-    // await seedPackages();
-
+    // Start the application
     application.start();
-    config.logger.info('Application started successfully');
-    
-    // Log test credentials
-    config.logger.info('\n📝 Test Credentials:');
-    config.logger.info('┌─────────────────┬─────────────────────────────────┬──────────┐');
-    config.logger.info('│ Role            │ Email                           │ Password │');
-    config.logger.info('├─────────────────┼─────────────────────────────────┼──────────┤');
-    config.logger.info('│ ADMIN           │ ' + config.ADMIN_EMAIL + ' │ ******** │');
-    config.logger.info('│ USER            │ ibrahim.maktech33@gmail.com     │ 123456   │');
-    config.logger.info('│ CONSULTANT      │ ibrahimsikder5033@gmail.com      │ 123456   │');
-    config.logger.info('└─────────────────┴─────────────────────────────────┴──────────┘');
-    
+
+    // Print startup status after server starts
+    setTimeout(() => startupLogger.print(), 500);
   } catch (error) {
+    startupLogger.addError('Server startup failed');
+    startupLogger.print();
     config.logger.error('Startup failed', error, 'Bootstrap');
     process.exit(1);
   }

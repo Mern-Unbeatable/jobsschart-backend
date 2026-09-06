@@ -82,11 +82,7 @@ async function removeExtraPackages() {
   });
 
   if (!extras.length) return 0;
-
   await detachAndDeletePackages(extras.map((pkg) => pkg.id));
-  config.logger.info(
-    `Removed ${extras.length} extra package(s): ${extras.map((p) => p.slug).join(', ')}`
-  );
   return extras.length;
 }
 
@@ -98,11 +94,7 @@ async function resetSeedPackages() {
   });
 
   if (!existing.length) return 0;
-
   await detachAndDeletePackages(existing.map((pkg) => pkg.id));
-  config.logger.info(
-    `Removed seed package(s) for refresh: ${existing.map((p) => p.slug).join(', ')}`
-  );
   return existing.length;
 }
 
@@ -157,7 +149,6 @@ export async function seedPackages({ reset = false, removeExtra = true } = {}) {
             sortOrder: source.sortOrder,
           },
         });
-        logger.info(`Package exists — updated pricing/sort only: ${source.slug}`);
         upserted++;
         continue;
       }
@@ -175,14 +166,8 @@ export async function seedPackages({ reset = false, removeExtra = true } = {}) {
           name: true,
         },
       });
-
-      logger.info(
-        `Package seeded — ${saved.slug} | €${saved.price} | ${saved.minutes} min | NL: ${saved.name?.nl || 'n/a'}`
-      );
       upserted++;
     }
-
-    logger.info(`Package seeding completed — ${upserted} package(s), slugs: ${SEED_SLUGS.join(', ')}`);
   } catch (error) {
     logger.error('Package seeding failed', error);
     throw error;
@@ -194,8 +179,8 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { connectDatabase } from '../config/db.js';
 
-const isDirectRun = process.argv[1]
-  && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const isDirectRun =
+  process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isDirectRun) {
   connectDatabase()

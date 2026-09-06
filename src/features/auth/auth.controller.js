@@ -59,8 +59,6 @@ class AuthController {
       firstNPrice
     } = validatedData;
 
-    this.log.info(`Signup attempt for email: ${email}`);
-
     const existingUser = await authService.getUserByEmail(email);
     if (existingUser) throw new ConflictError('Email is already in use');
 
@@ -92,7 +90,6 @@ class AuthController {
 
     await authService.updateRefreshToken(user.id, tokens.refreshToken);
     this._setAuthCookies(res, tokens.accessToken, tokens.refreshToken);
-    this.log.info(`User registered: ${user.email} (${user.id})`);
 
     ResponseHandler.created(res, {
       message: 'Registration successful',
@@ -121,7 +118,6 @@ class AuthController {
 
   signIn = catchAsync(async (req, res) => {
     const { email, password } = signinSchema.parse(req.body);
-    this.log.info(`Login attempt: ${email}`);
 
     const user = await authService.getUserByEmailWithPassword(email);
     if (!user) {
@@ -152,7 +148,6 @@ class AuthController {
     this._setAuthCookies(res, tokens.accessToken, tokens.refreshToken);
 
     const { password: _, ...userWithoutPassword } = user;
-    this.log.info(`User logged in: ${user.email} (${user.id})`);
 
     ResponseHandler.success(res, {
       message: 'Login successful',
@@ -179,7 +174,6 @@ class AuthController {
 
     await authService.updateRefreshToken(user.id, newRefreshToken);
     this._setAuthCookies(res, newAccessToken, newRefreshToken);
-    this.log.info(`Token refreshed for user: ${user.id}`);
 
     ResponseHandler.success(res, {
       message: 'Token refreshed successfully',
@@ -193,7 +187,6 @@ class AuthController {
   signOut = catchAsync(async (req, res) => {
     const userId = req.user?.id;
     if (userId) await authService.clearRefreshToken(userId);
-    this.log.info(`Signout for user: ${userId || 'unknown'}`);
 
     const cookieOptions = {
       httpOnly: true, secure: config.NODE_ENV !== 'development', sameSite: 'lax', path: '/',
@@ -217,26 +210,21 @@ class AuthController {
 
     const hashedPassword = await authService.hashPassword(newPassword);
     await authService.updatePassword(userId, hashedPassword);
-    this.log.info(`Password changed for user: ${userId}`);
     ResponseHandler.updated(res, { message: 'Password changed successfully' });
   });
 
   forgotPassword = catchAsync(async (req, res) => {
     const { email } = forgotPasswordSchema.parse(req.body);
-    this.log.info(`Forgot password request for: ${email}`);
 
     const user = await authService.getUserByEmailWithPassword(email);
     if (!user) {
-      this.log.warn(`Forgot password: no account for ${email}`);
+      this.log.warn('Password reset requested for a non-existent account');
       throw new NotFoundError('No account found with this email address');
     }
-
 
     const userId = user.id;
     const userName = user.name || '';
     const userEmail = email;
-
-    this.log.info(`Sending OTP to userId=${userId} email=${userEmail} name="${userName}"`);
 
     verificationStore.clearVerified(userEmail);
 
@@ -245,11 +233,10 @@ class AuthController {
 
     try {
       await mailTransport.sendOtpEmail(userEmail, otp, userName, 'password_reset');
-      this.log.info(`OTP sent to: ${userEmail}`);
     } catch (emailError) {
-      this.log.error(`SMTP error for ${userEmail}: [${emailError.code}] ${emailError.message}`);
+      this.log.error('Password reset email delivery failed');
       if (config.NODE_ENV === 'development') {
-        throw new BadRequestError(`Email failed: [${emailError.code}] ${emailError.message}`);
+        throw new BadRequestError('Failed to send reset code. Please try again later.');
       }
       throw new BadRequestError('Failed to send reset code. Please try again later.');
     }
@@ -267,8 +254,6 @@ class AuthController {
     const { otp, email } = req.body;
     if (!email) throw new BadRequestError('Email is required');
     if (!otp) throw new BadRequestError('OTP is required');
-
-    this.log.info(`OTP verification for: ${email}`);
 
     const user = await authOtpService.verifyOtpFlow({
       email, otp, expectedPurpose: 'password_reset',
@@ -305,9 +290,7 @@ class AuthController {
     verificationStore.clearVerified(email);
     mailTransport
       .sendPasswordChangedEmail(email, user.name || '')
-      .catch((err) => this.log.error(`Password changed email failed: ${err.message}`));
-
-    this.log.info(`Password reset for user: ${user.id}`);
+      .catch(() => this.log.error('Password changed email delivery failed'));
 
     ResponseHandler.success(res, {
       message: 'Password reset successfully. You can now login with your new password.',

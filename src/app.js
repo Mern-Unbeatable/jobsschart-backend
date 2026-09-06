@@ -34,7 +34,6 @@ export class Application {
     try {
       config.initialize();
       config.validateRequired();
-      this.logger.info('Configuration loaded successfully');
     } catch (error) {
       this.logger.error('Failed to load configuration', error);
       process.exit(1);

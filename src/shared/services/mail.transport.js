@@ -11,7 +11,6 @@ class MailTransport {
 
   _initTransporter() {
     try {
-
       if (config.SMTP_HOST && config.SMTP_USER && config.SMTP_PASS) {
         this.transporter = nodemailer.createTransport({
           host: config.SMTP_HOST,
@@ -26,7 +25,6 @@ class MailTransport {
         });
         this.senderEmail = config.SMTP_USER;
         this.senderName = config.SMTP_FROM_NAME || 'Casagen';
-        this.log.info(`Mail transporter initialised via SMTP: ${config.SMTP_HOST}:${config.SMTP_PORT}`);
         return;
       }
 
@@ -40,14 +38,13 @@ class MailTransport {
         });
         this.senderEmail = config.SENDER_EMAIL;
         this.senderName = 'Casagen';
-        this.log.info(`Mail transporter initialised via Gmail: ${config.SENDER_EMAIL}`);
         return;
       }
 
       // ── No config found ───────────────────────────────────────────────
       this.log.warn(
         'No mail transport configured. Set SMTP_HOST/SMTP_USER/SMTP_PASS ' +
-        'or SENDER_EMAIL/SENDER_EMAIL_PASSWORD in your .env'
+          'or SENDER_EMAIL/SENDER_EMAIL_PASSWORD in your .env',
       );
     } catch (error) {
       this.log.error(`Failed to initialise mail transporter: ${error.message}`);
@@ -163,7 +160,6 @@ class MailTransport {
 
     return this._sendMail({ to: email, subject, html });
   }
-
 
   async sendPasswordResetEmail(email, resetUrl, name) {
     const displayName = name || 'there';

@@ -17,7 +17,6 @@ export async function seedAdmin() {
     });
 
     if (existingAdmin) {
-      config.logger.info(`Admin already exists (${ADMIN_EMAIL})`);
       return;
     }
 
@@ -48,10 +47,6 @@ export async function seedAdmin() {
         creditBalance: 0,
       },
     });
-
-    config.logger.info(
-      `Admin created successfully — email: ${admin.email}, id: ${admin.id}, username: ${admin.username}`
-    );
   } catch (error) {
     config.logger.error('Admin seed failed', error);
     throw error;
@@ -72,7 +67,6 @@ export async function seedUser() {
     });
 
     if (existingUser) {
-      config.logger.info(`User already exists (${userEmail})`);
       return existingUser;
     }
 
@@ -103,13 +97,9 @@ export async function seedUser() {
     await prisma.wallet.create({
       data: {
         userId: user.id,
-        creditBalance: 100.00,
+        creditBalance: 100.0,
       },
     });
-
-    config.logger.info(
-      `User created successfully — email: ${user.email}, id: ${user.id}, username: ${user.username}`
-    );
 
     return user;
   } catch (error) {
@@ -133,7 +123,6 @@ export async function seedConsultant() {
     });
 
     if (existingConsultant) {
-      config.logger.info(`Consultant already exists (${consultantEmail})`);
       return existingConsultant;
     }
 
@@ -168,15 +157,19 @@ export async function seedConsultant() {
       },
     });
 
-
     const consultant = await prisma.consultant.create({
       data: {
         userId: consultantUser.id,
-        specialization: ['Business Strategy', 'Career Development', 'Leadership', 'Digital Marketing'],
+        specialization: [
+          'Business Strategy',
+          'Career Development',
+          'Leadership',
+          'Digital Marketing',
+        ],
         bio: 'With over 10 years of experience in business consulting, I help entrepreneurs and professionals achieve their goals. Specialized in business strategy, career development, and digital transformation.',
-        pricePerMinute: 2.50,
+        pricePerMinute: 2.5,
         firstNMinutes: 5,
-        firstNPrice: 5.00,
+        firstNPrice: 5.0,
         rating: 4.8,
         totalReviews: 25,
         onlineStatus: 'ONLINE',
@@ -185,9 +178,8 @@ export async function seedConsultant() {
       },
     });
 
-
     const daysOfWeek = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY'];
-    
+
     for (const day of daysOfWeek) {
       await prisma.availabilitySlot.create({
         data: {
@@ -200,10 +192,6 @@ export async function seedConsultant() {
       });
     }
 
-    config.logger.info(
-      `Consultant created successfully — email: ${consultantUser.email}, id: ${consultantUser.id}, consultantId: ${consultant.id}`
-    );
-
     return { user: consultantUser, consultant };
   } catch (error) {
     config.logger.error('Consultant seed failed', error);
@@ -211,17 +199,11 @@ export async function seedConsultant() {
   }
 }
 
-
 export async function runAllSeeds() {
   try {
-    config.logger.info('Starting database seeding...');
-    
-
     await seedAdmin();
     await seedUser();
     await seedConsultant();
-    
-    config.logger.info('Database seeding completed successfully!');
   } catch (error) {
     config.logger.error('Database seeding failed:', error);
     throw error;
