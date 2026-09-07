@@ -11,6 +11,8 @@ const stringOrArray = z
   .union([z.string(), z.array(z.string()), z.null()])
   .optional()
   .transform((val) => {
+    // undefined means the field was absent — preserve it so update logic can skip the column
+    if (val === undefined) return undefined;
     if (!val) return [];
     if (Array.isArray(val)) return val;
     return val

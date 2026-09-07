@@ -107,6 +107,7 @@ class BlogService {
               email: true,
               avatar: true,
               bio: true,
+              role: true,
             },
           },
           category: {
@@ -141,10 +142,11 @@ class BlogService {
       categoryId,
       category,
       userId,
+      userRole,
       search,
       isFeatured,
       tag,
-      status, // Status filter for admin
+      status,
     } = queryParams;
 
     const where = {};
@@ -166,8 +168,12 @@ class BlogService {
       };
     }
 
-    if (userId) {
-      where.userId = userId;
+    // Build user relation filter (supports userId and/or userRole independently)
+    const userFilter = {};
+    if (userId) userFilter.id = userId;
+    if (userRole) userFilter.role = userRole;
+    if (Object.keys(userFilter).length > 0) {
+      where.user = userFilter;
     }
 
     if (isFeatured !== undefined) {
@@ -212,6 +218,7 @@ class BlogService {
               email: true,
               avatar: true,
               bio: true,
+              role: true,
             },
           },
           category: {
