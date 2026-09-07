@@ -184,6 +184,18 @@ class BlogController {
       data: { blog },
     });
   });
+
+  // Get logged-in user's own blogs (accessible to ADMIN and CONSULTANT)
+  getMyBlogs = catchAsync(async (req, res) => {
+    const result = await blogService.getBlogsForAdmin({
+      ...req.query,
+      userId: req.user.id,
+    });
+    ResponseHandler.success(res, {
+      message: 'Your blogs fetched successfully',
+      data: result,
+    });
+  });
 }
 
 export const blogController = new BlogController();

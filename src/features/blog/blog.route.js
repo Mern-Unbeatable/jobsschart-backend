@@ -15,6 +15,8 @@ router.get('/categories/:id', blogController.getCategoryById);
 
 router.use(authMiddleware.protect);
 
+router.get('/mine', authMiddleware.authorize('ADMIN', 'CONSULTANT'), blogController.getMyBlogs);
+
 router.get('/admin/drafts', authMiddleware.authorize('ADMIN'), blogController.getDraftBlogs);
 router.get(
   '/admin/pending',
