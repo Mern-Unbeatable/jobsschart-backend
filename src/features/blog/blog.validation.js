@@ -7,6 +7,48 @@ import {
 
 const emptyToNull = (val) => (val === '' || val === 'null' || val === 'undefined' ? null : val);
 
+const parseJsonIfPossible = (value) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return value;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+};
+
+const editorJsBlockSchema = z
+  .object({
+    type: z.string().min(1),
+    data: z.record(z.any()).optional(),
+  })
+  .passthrough();
+
+const editorJsDocumentSchema = z
+  .object({
+    time: z.number().optional(),
+    blocks: z.array(editorJsBlockSchema),
+    version: z.string().optional(),
+  })
+  .passthrough();
+
+const i18nEditorJsSchema = z
+  .object({
+    en: z.union([z.string(), editorJsDocumentSchema]).optional(),
+    nl: z.union([z.string(), editorJsDocumentSchema]).optional(),
+  })
+  .refine((value) => value.en !== undefined || value.nl !== undefined, {
+    message: 'Provide English or Dutch content',
+  });
+
+const blogContentSchema = z.preprocess(
+  parseJsonIfPossible,
+  z.union([z.string(), editorJsDocumentSchema, i18nEditorJsSchema]).optional().nullable(),
+);
+
 const stringOrArray = z
   .union([z.string(), z.array(z.string()), z.null()])
   .optional()
@@ -37,7 +79,7 @@ export const createBlogSchema = z.object({
     .string()
     .regex(/^[a-z0-9-]+$/)
     .optional(),
-  content: optionalI18nText(z.string()),
+  content: blogContentSchema,
   excerpt: optionalI18nText(z.string()),
   tags: stringOrArray,
   image: stringOrArray,
@@ -61,7 +103,7 @@ export const updateBlogSchema = z.object({
     .string()
     .regex(/^[a-z0-9-]+$/)
     .optional(),
-  content: optionalI18nText(z.string()),
+  content: blogContentSchema,
   excerpt: optionalI18nText(z.string()),
   tags: stringOrArray,
   image: stringOrArray,

@@ -41,10 +41,26 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
-// Get base URL from config
-const getBaseUrl = () => {
-    return config.BACKEND_URL || `http://localhost:${config.PORT || 5000}`;
+/**
+ * Prefer the incoming request host so local uploads are not pointed at
+ * production BACKEND_URL (which leaves Editor.js stuck on a loader).
+ */
+const getBaseUrl = (req) => {
+    const forwardedProto = req?.get?.("x-forwarded-proto");
+    const forwardedHost = req?.get?.("x-forwarded-host");
+    const host = forwardedHost || req?.get?.("host");
+    if (host) {
+        const proto = forwardedProto || req?.protocol || "http";
+        return `${proto}://${host}`.replace(/\/$/, "");
+    }
+    return (config.BACKEND_URL || `http://localhost:${config.PORT || 5000}`).replace(
+        /\/$/,
+        "",
+    );
 };
+
+const buildUploadUrl = (req, folderName, filename) =>
+    `${getBaseUrl(req)}/uploads/${folderName}/${filename}`;
 
 // Single image upload (supports donation, user avatar, etc.)
 export const uploadSingleImage = (fieldName = "image", folderName = "users") => {
@@ -60,8 +76,7 @@ export const uploadSingleImage = (fieldName = "image", folderName = "users") => 
                 return res.status(400).json({ success: false, message: err.message });
             }
             if (req.file) {
-                const baseUrl = getBaseUrl();
-                const fileUrl = `${baseUrl}/uploads/${folderName}/${req.file.filename}`;
+                const fileUrl = buildUploadUrl(req, folderName, req.file.filename);
 
                 // Set the field in req.body
                 req.body[fieldName] = fileUrl;
@@ -116,9 +131,8 @@ export const uploadMultipleImages = (
 
             // Process uploaded files
             if (req.files && req.files.length > 0) {
-                const baseUrl = getBaseUrl();
-                req.body[fieldName] = req.files.map(
-                    (file) => `${baseUrl}/uploads/${folderName}/${file.filename}`
+                req.body[fieldName] = req.files.map((file) =>
+                    buildUploadUrl(req, folderName, file.filename),
                 );
             }
 
@@ -154,8 +168,7 @@ export const uploadDonationImage = (fieldName = "image", folderName = "donations
 
             // Handle image upload for donation
             if (req.file) {
-                const baseUrl = getBaseUrl();
-                const imageUrl = `${baseUrl}/uploads/${folderName}/${req.file.filename}`;
+                const imageUrl = buildUploadUrl(req, folderName, req.file.filename);
 
                 // Check if body has donationData as string (form-data)
                 if (req.body.donationData && typeof req.body.donationData === 'string') {
@@ -202,8 +215,7 @@ export const uploadDonationWithNestedImage = (folderName = "donations") => {
             const imageFile = req.files?.find(f => f.fieldname === 'image' || f.fieldname === 'donationData[image]');
 
             if (imageFile) {
-                const baseUrl = config.BACKEND_URL || `http://localhost:${config.PORT || 5000}`;
-                const imageUrl = `${baseUrl}/uploads/${folderName}/${imageFile.filename}`;
+                const imageUrl = buildUploadUrl(req, folderName, imageFile.filename);
 
                 // Parse donationData if it exists
                 if (req.body.donationData && typeof req.body.donationData === 'string') {
@@ -260,7 +272,7 @@ export const uploadVerificationDocuments = () => {
             if (err) {
                 return res.status(400).json({ success: false, message: err.message });
             }
-            const baseUrl = getBaseUrl();
+            const baseUrl = getBaseUrl(req);
             if (req.files?.idFront?.[0]) {
                 req.body.idFrontUrl = `${baseUrl}/uploads/verification/${req.files.idFront[0].filename}`;
             }

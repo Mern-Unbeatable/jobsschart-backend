@@ -72,6 +72,21 @@ class BlogController {
     });
   });
 
+  uploadContentImage = catchAsync(async (req, res) => {
+    const url = req.body?.image;
+    if (!url) {
+      ResponseHandler.badRequest(res, {
+        message: 'Image upload failed',
+      });
+      return;
+    }
+
+    ResponseHandler.success(res, {
+      message: 'Image uploaded successfully',
+      data: { url },
+    });
+  });
+
   // Update blog
   updateBlog = catchAsync(async (req, res) => {
     log.info(`Updating blog: ${req.params.id}`);

@@ -38,6 +38,13 @@ router.post(
   blogController.createBlog,
 );
 
+router.post(
+  '/upload-content-image',
+  authMiddleware.authorize('ADMIN', 'CONSULTANT'),
+  uploadSingleImage('image', 'blogs'),
+  blogController.uploadContentImage,
+);
+
 router.patch(
   '/:id',
   authMiddleware.authorize('ADMIN', 'CONSULTANT'),

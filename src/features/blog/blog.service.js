@@ -4,6 +4,7 @@ import { NotFoundError, ConflictError } from '../../shared/globals/helpers/error
 import { generateSlug, makeSlugUnique } from '../../shared/utils/slug-utils.js';
 import {
   expandI18n,
+  isI18nObject,
   jsonLocaleSearch,
   pickSourceText,
 } from '../../shared/services/translate.service.js';
@@ -20,6 +21,263 @@ function normalizeImageArray(value) {
       .filter(Boolean);
   }
   return [];
+}
+
+function parseJsonIfPossible(value) {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return value;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function isEditorJsDocument(value) {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Array.isArray(value.blocks)
+  );
+}
+
+function normalizeListItems(items = []) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map((item) => {
+      if (typeof item === 'string') {
+        const text = item.trim();
+        return text || null;
+      }
+
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+
+      const content = typeof item.content === 'string' ? item.content.trim() : '';
+      const nestedItems = normalizeListItems(item.items || []);
+      if (!content && nestedItems.length === 0) return null;
+
+      return {
+        content,
+        items: nestedItems,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeEditorJsDocument(value) {
+  const parsed = parseJsonIfPossible(value);
+  if (!isEditorJsDocument(parsed)) return null;
+
+  const blocks = parsed.blocks
+    .map((block) => {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) return null;
+      const type = typeof block.type === 'string' ? block.type : '';
+      if (!type) return null;
+
+      if (type === 'header') {
+        const level = Number(block?.data?.level);
+        return {
+          type: 'header',
+          data: {
+            text: typeof block?.data?.text === 'string' ? block.data.text : '',
+            level: Number.isInteger(level) && level >= 1 && level <= 3 ? level : 2,
+          },
+        };
+      }
+
+      if (type === 'paragraph') {
+        return {
+          type: 'paragraph',
+          data: {
+            text: typeof block?.data?.text === 'string' ? block.data.text : '',
+          },
+        };
+      }
+
+      if (type === 'list') {
+        const style = block?.data?.style === 'ordered' ? 'ordered' : 'unordered';
+        const items = normalizeListItems(block?.data?.items || []);
+        return {
+          type: 'list',
+          data: {
+            style,
+            items,
+          },
+        };
+      }
+
+      if (type === 'quote') {
+        return {
+          type: 'quote',
+          data: {
+            text: typeof block?.data?.text === 'string' ? block.data.text : '',
+            caption: typeof block?.data?.caption === 'string' ? block.data.caption : '',
+            alignment: typeof block?.data?.alignment === 'string' ? block.data.alignment : 'left',
+          },
+        };
+      }
+
+      if (type === 'code') {
+        return {
+          type: 'code',
+          data: {
+            code: typeof block?.data?.code === 'string' ? block.data.code : '',
+          },
+        };
+      }
+
+      if (type === 'image') {
+        const imageUrl =
+          (typeof block?.data?.file?.url === 'string' && block.data.file.url.trim()) ||
+          (typeof block?.data?.url === 'string' && block.data.url.trim()) ||
+          '';
+
+        if (!imageUrl) return null;
+
+        return {
+          type: 'image',
+          data: {
+            file: { url: imageUrl },
+            caption: typeof block?.data?.caption === 'string' ? block.data.caption : '',
+            withBorder: Boolean(block?.data?.withBorder),
+            withBackground: Boolean(block?.data?.withBackground),
+            stretched: Boolean(block?.data?.stretched),
+          },
+        };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+
+  return {
+    time: typeof parsed.time === 'number' ? parsed.time : Date.now(),
+    version: typeof parsed.version === 'string' ? parsed.version : '2.30.8',
+    blocks,
+  };
+}
+
+function coerceEditorJsI18nContent(value) {
+  const parsed = parseJsonIfPossible(value);
+
+  if (isEditorJsDocument(parsed)) {
+    const doc = normalizeEditorJsDocument(parsed);
+    return doc ? { en: doc, nl: doc } : null;
+  }
+
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const hasLocales =
+      Object.prototype.hasOwnProperty.call(parsed, 'en') ||
+      Object.prototype.hasOwnProperty.call(parsed, 'nl');
+
+    if (!hasLocales) return null;
+
+    const enDoc = normalizeEditorJsDocument(parsed.en);
+    const nlDoc = normalizeEditorJsDocument(parsed.nl);
+    if (!enDoc && !nlDoc) return null;
+
+    return {
+      en: enDoc || nlDoc,
+      nl: nlDoc || enDoc,
+    };
+  }
+
+  return null;
+}
+
+function extractListText(items = []) {
+  if (!Array.isArray(items)) return [];
+
+  return items.flatMap((item) => {
+    if (typeof item === 'string') return [item];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+
+    const current = typeof item.content === 'string' ? item.content : '';
+    return [current, ...extractListText(item.items || [])];
+  });
+}
+
+function extractEditorText(editorDoc) {
+  if (!isEditorJsDocument(editorDoc)) return '';
+
+  return editorDoc.blocks
+    .flatMap((block) => {
+      if (block.type === 'paragraph' || block.type === 'header') {
+        return [block?.data?.text || ''];
+      }
+      if (block.type === 'quote') {
+        return [block?.data?.text || '', block?.data?.caption || ''];
+      }
+      if (block.type === 'code') {
+        return [block?.data?.code || ''];
+      }
+      if (block.type === 'list') {
+        return extractListText(block?.data?.items || []);
+      }
+      return [];
+    })
+    .join(' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function normalizeContentForStorage(contentInput, sourceLocale) {
+  const editorI18n = coerceEditorJsI18nContent(contentInput);
+  if (editorI18n) return editorI18n;
+
+  if (contentInput == null) return null;
+
+  if (typeof contentInput === 'string') {
+    return expandI18n(contentInput, { html: true, sourceLocale });
+  }
+
+  if (isI18nObject(contentInput)) {
+    const hasEditorInLocales =
+      isEditorJsDocument(parseJsonIfPossible(contentInput.en)) ||
+      isEditorJsDocument(parseJsonIfPossible(contentInput.nl));
+
+    if (hasEditorInLocales) {
+      const enDoc = normalizeEditorJsDocument(contentInput.en);
+      const nlDoc = normalizeEditorJsDocument(contentInput.nl);
+      if (enDoc || nlDoc) {
+        return {
+          en: enDoc || nlDoc,
+          nl: nlDoc || enDoc,
+        };
+      }
+    }
+
+    return expandI18n(contentInput, { html: true, sourceLocale });
+  }
+
+  return contentInput;
+}
+
+function calculateReadTime(contentValue, sourceLocale = 'en') {
+  const wordsPerMinute = 200;
+
+  if (isI18nObject(contentValue)) {
+    const preferredLocale = sourceLocale === 'nl' ? 'nl' : 'en';
+    const doc = normalizeEditorJsDocument(
+      contentValue[preferredLocale] ?? contentValue.en ?? contentValue.nl,
+    );
+    if (doc) {
+      const text = extractEditorText(doc);
+      const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+      return Math.max(1, Math.ceil(wordCount / wordsPerMinute));
+    }
+  }
+
+  const fallbackText = pickSourceText(contentValue);
+  const fallbackWords = fallbackText ? fallbackText.split(/\s+/).filter(Boolean).length : 0;
+  return Math.max(1, Math.ceil(fallbackWords / wordsPerMinute));
 }
 
 class BlogService {
@@ -329,8 +587,7 @@ class BlogService {
   async createBlog(data) {
     const sourceLocale = data.sourceLang || 'en';
     const title = await expandI18n(data.title, { sourceLocale });
-    const content =
-      data.content != null ? await expandI18n(data.content, { html: true, sourceLocale }) : null;
+    const content = await normalizeContentForStorage(data.content, sourceLocale);
     const excerpt = data.excerpt != null ? await expandI18n(data.excerpt, { sourceLocale }) : null;
     const metaTitle =
       data.metaTitle != null ? await expandI18n(data.metaTitle, { sourceLocale }) : null;
@@ -349,9 +606,7 @@ class BlogService {
     });
 
     // Calculate read time
-    const wordsPerMinute = 200;
-    const wordCount = pickSourceText(content).trim().split(/\s+/).filter(Boolean).length || 0;
-    const readTime = Math.max(1, Math.ceil(wordCount / wordsPerMinute));
+    const readTime = calculateReadTime(content, sourceLocale);
 
     // Validate category if provided
     if (data.categoryId) {
@@ -380,7 +635,7 @@ class BlogService {
       data: {
         title,
         slug,
-        content: content || { en: '', nl: '' },
+        content: content || { en: { blocks: [] }, nl: { blocks: [] } },
         excerpt,
         tags: data.tags || [],
         metaTitle,
@@ -437,16 +692,14 @@ class BlogService {
     }
 
     // Update read time based on content
-    if (data.content) {
-      const wordsPerMinute = 200;
-      const wordCount = pickSourceText(data.content).trim().split(/\s+/).filter(Boolean).length;
-      updateData.readTime = Math.max(1, Math.ceil(wordCount / wordsPerMinute));
+    if (data.content !== undefined) {
+      const normalizedContent = await normalizeContentForStorage(data.content, sourceLocale);
+      updateData.content = normalizedContent;
+      updateData.readTime = calculateReadTime(normalizedContent, sourceLocale);
     }
 
     // Update basic fields
     if (data.title !== undefined) updateData.title = await expandI18n(data.title, { sourceLocale });
-    if (data.content !== undefined)
-      updateData.content = await expandI18n(data.content, { html: true, sourceLocale });
     if (data.excerpt !== undefined)
       updateData.excerpt =
         data.excerpt == null ? null : await expandI18n(data.excerpt, { sourceLocale });
