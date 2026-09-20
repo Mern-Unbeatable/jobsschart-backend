@@ -155,3 +155,4 @@ node_modules
 .env
 *.log
 .env.example
+branch_structure.json
