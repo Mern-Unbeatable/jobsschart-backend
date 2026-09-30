@@ -332,7 +332,29 @@ export class Server {
       }),
     );
 
-    const allowedOrigins = ['http://localhost:5173', 'https://illorac.com', 'https://illorac.nl'];
+    const toOrigin = (url) => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return null;
+      }
+    };
+
+    const allowedOrigins = [
+      ...new Set(
+        [
+          'http://localhost:5173',
+          'https://illorac.com',
+          'https://www.illorac.com',
+          'https://illorac.nl',
+          'https://www.illorac.nl',
+          config.FRONTEND_URL,
+          ...(config.CLIENT_URLS || []),
+        ]
+          .map(toOrigin)
+          .filter(Boolean),
+      ),
+    ];
 
     app.use(
       cors({
