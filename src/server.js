@@ -27,6 +27,7 @@ const __dirname = path.dirname(__filename);
 const GEO_COOKIE_NAME = 'country_code';
 const GEO_COOKIE_MAX_AGE = 24 * 60 * 60 * 1000;
 const GEO_SUPPORTED_HOSTS = ['illorac.com', 'illorac.nl'];
+const GEO_NL_DOMAIN = 'illorac.com';
 const GEO_IP_CACHE_TTL = 6 * 60 * 60 * 1000;
 
 export class Server {
@@ -108,7 +109,7 @@ export class Server {
       }
 
       // Determine target domain based on country
-      const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
+      const targetDomain = country === 'NL' ? GEO_NL_DOMAIN : 'illorac.com';
 
       // If not on the correct domain, redirect
       if (host !== targetDomain) {
@@ -473,7 +474,7 @@ export class Server {
         }
       }
 
-      const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
+      const targetDomain = country === 'NL' ? GEO_NL_DOMAIN : 'illorac.com';
       const shouldRedirect = hostEligible && host !== targetDomain;
 
       res.set('Cache-Control', 'no-store');
@@ -506,7 +507,7 @@ export class Server {
       const country =
         this.normalizeCountryCode(req.cookies?.[GEO_COOKIE_NAME]) ||
         this.normalizeCountryCode(geoData?.country_code);
-      const targetDomain = country === 'NL' ? 'illorac.nl' : 'illorac.com';
+      const targetDomain = country === 'NL' ? GEO_NL_DOMAIN : 'illorac.com';
       const redirectEligibleHost = GEO_SUPPORTED_HOSTS.includes(host);
 
       res.json({
